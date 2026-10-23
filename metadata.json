@@ -1,0 +1,6 @@
+{
+  "name": "Wayback Site Cloner & Rclone R2 Backup",
+  "description": "Clone archived websites from Wayback Machine and backup data from Cloudflare R2 / S3 storage with Rclone integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
