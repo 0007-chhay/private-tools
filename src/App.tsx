@@ -10,6 +10,7 @@ import { ConfigModal } from './components/ConfigModal';
 import { R2BackupView } from './components/R2BackupView';
 import { CFAccountCreatorView } from './components/CFAccountCreatorView';
 import { TrendAnalyticsView } from './components/TrendAnalyticsView';
+import { TelegramAutoReplyView } from './components/TelegramAutoReplyView';
 import {
   AssetItem,
   CloneConfig,
@@ -35,13 +36,13 @@ const DEFAULT_CONFIG: CloneConfig = {
   deepCssAssets: true,
   cleanToolbarComments: true,
   rewriteInternalLinks: true,
-  maxAssets: 80,
-  concurrency: 4,
+  maxAssets: 500,
+  concurrency: 6,
 };
 
 export default function App() {
-  // Tool mode selector: 'wayback' | 'rclone_r2'
-  const [currentTool, setCurrentTool] = useState<ToolMode>('rclone_r2');
+  // Default tool: Wayback Site Cloner as requested
+  const [currentTool, setCurrentTool] = useState<ToolMode>('wayback');
 
   // Input state
   const [inputUrlText, setInputUrlText] = useState<string>('');
@@ -169,7 +170,10 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {currentTool === 'trend_analytics' ? (
+        {currentTool === 'telegram_auto_reply' ? (
+          /* Mode 5: Telegram Auto-Reply & Anti-Spam Deflector */
+          <TelegramAutoReplyView />
+        ) : currentTool === 'trend_analytics' ? (
           /* Mode 4: Viral Trends, Hashtags & TikTok Analytics */
           <TrendAnalyticsView />
         ) : currentTool === 'cf_accounts' ? (

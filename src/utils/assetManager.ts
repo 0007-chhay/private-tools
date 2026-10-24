@@ -234,22 +234,80 @@ export function discoverAssets(
     if (src) registerAsset(src, 'script', 'js');
   });
 
-  // 3. Discover Images (<img src="...">)
-  const images = doc.querySelectorAll('img[src]');
+  // 3. Discover Images (<img src="...">, data-src, srcset, background-images)
+  const images = doc.querySelectorAll('img');
   images.forEach((img) => {
+    // Normal src
     const src = img.getAttribute('src');
     if (src) registerAsset(src, 'img', 'image');
+
+    // Lazy load data-src, data-original, data-lazy-src
+    const dataSrc =
+      img.getAttribute('data-src') ||
+      img.getAttribute('data-original') ||
+      img.getAttribute('data-lazy-src') ||
+      img.getAttribute('data-url');
+    if (dataSrc) registerAsset(dataSrc, 'img', 'image');
+
+    // srcset
+    const srcset = img.getAttribute('srcset') || img.getAttribute('data-srcset');
+    if (srcset) {
+      const candidates = srcset.split(',').map((s) => s.trim().split(/\s+/)[0]);
+      candidates.forEach((cand) => {
+        if (cand) registerAsset(cand, 'img', 'image');
+      });
+    }
   });
 
   // 4. Discover Sources & Backgrounds (<source src="...">, <source srcset="...">)
-  const sources = doc.querySelectorAll('source[src]');
+  const sources = doc.querySelectorAll('source');
   sources.forEach((source) => {
     const src = source.getAttribute('src');
     if (src) registerAsset(src, 'source');
+
+    const srcset = source.getAttribute('srcset');
+    if (srcset) {
+      const candidates = srcset.split(',').map((s) => s.trim().split(/\s+/)[0]);
+      candidates.forEach((cand) => {
+        if (cand) registerAsset(cand, 'source', 'image');
+      });
+    }
   });
 
-  // 5. Discover Audio/Video
-  const mediaElements = doc.querySelectorAll('video[src], audio[src]');
+  // 5. Discover Background Images in inline style attributes (style="background-image: url(...)")
+  const elementsWithStyle = doc.querySelectorAll('[style*="url("]');
+  elementsWithStyle.forEach((el) => {
+    const styleAttr = el.getAttribute('style') || '';
+    const urlMatches = styleAttr.matchAll(/url\(\s*['"]?([^'")]+)['"]?\s*\)/gi);
+    for (const match of urlMatches) {
+      const bgUrl = match[1];
+      if (bgUrl && !bgUrl.startsWith('data:')) {
+        registerAsset(bgUrl, 'style', 'image');
+      }
+    }
+  });
+
+  // 6. Discover direct image links in anchors (<a href="...jpg">)
+  const imageLinks = doc.querySelectorAll('a[href]');
+  imageLinks.forEach((a) => {
+    const href = a.getAttribute('href');
+    if (href) {
+      const cleanHref = href.split('?')[0].split('#')[0].toLowerCase();
+      if (
+        cleanHref.endsWith('.jpg') ||
+        cleanHref.endsWith('.jpeg') ||
+        cleanHref.endsWith('.png') ||
+        cleanHref.endsWith('.webp') ||
+        cleanHref.endsWith('.gif') ||
+        cleanHref.endsWith('.svg')
+      ) {
+        registerAsset(href, 'a', 'image');
+      }
+    }
+  });
+
+  // 7. Discover Audio/Video
+  const mediaElements = doc.querySelectorAll('video[src], audio[src], video > source[src], audio > source[src]');
   mediaElements.forEach((el) => {
     const src = el.getAttribute('src');
     if (src) registerAsset(src, el.tagName.toLowerCase(), 'media');

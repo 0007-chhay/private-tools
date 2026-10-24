@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import JSZip from 'jszip';
 import {
   S3Client,
   ListBucketsCommand,
@@ -50,12 +51,9 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1200): Promise
 
       const headers: Record<string, string> = {
         'User-Agent': ua,
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        Referer: 'https://web.archive.org/',
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
         'Upgrade-Insecure-Requests': '1',
       };
 
@@ -856,9 +854,189 @@ app.post('/api/tiktok/verify-analytics', async (req: Request, res: Response) => 
   });
 });
 
+// One-click Project ZIP Download Endpoint
+app.get('/api/download-project', async (_req: Request, res: Response) => {
+  try {
+    const zip = new JSZip();
+    const rootDir = __dirname;
+
+    function addDirToZip(currentDir: string, zipFolder: JSZip) {
+      const items = fs.readdirSync(currentDir);
+      for (const item of items) {
+        if (
+          item === 'node_modules' ||
+          item === '.git' ||
+          item === 'dist' ||
+          item === '.aistudio' ||
+          (item.startsWith('.env') && item !== '.env.example')
+        ) {
+          continue;
+        }
+
+        const fullPath = path.join(currentDir, item);
+        const stat = fs.statSync(fullPath);
+
+        if (stat.isDirectory()) {
+          const subFolder = zipFolder.folder(item);
+          if (subFolder) {
+            addDirToZip(fullPath, subFolder);
+          }
+        } else {
+          const fileData = fs.readFileSync(fullPath);
+          zipFolder.file(item, fileData);
+        }
+      }
+    }
+
+    addDirToZip(rootDir, zip);
+
+    const buffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="web-suite-pro.zip"');
+    res.setHeader('Content-Length', buffer.length);
+    return res.end(buffer);
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to generate project zip',
+      details: err?.message,
+    });
+  }
+});
+
+// Telegram Auto-Responder & Anti-Spam APIs
+app.post('/api/telegram/test-bot', async (req: Request, res: Response) => {
+  const { botToken } = req.body || {};
+
+  if (!botToken || typeof botToken !== 'string' || botToken.trim() === '') {
+    return res.status(400).json({
+      success: false,
+      error: 'សូមបញ្ចូល Telegram Bot Token ដែលបានមកពី @BotFather',
+    });
+  }
+
+  const cleanToken = botToken.trim();
+
+  // If token is a test/demo keyword
+  if (cleanToken === 'demo' || cleanToken.toLowerCase() === 'test') {
+    return res.json({
+      success: true,
+      mode: 'demo',
+      bot: {
+        id: 7924180421,
+        is_bot: true,
+        first_name: 'AntiSpam Defender Bot',
+        username: 'antispam_deflector_bot',
+        can_join_groups: true,
+        can_read_all_group_messages: false,
+        supports_inline_queries: false,
+      },
+      message: 'បានតភ្ជាប់ទៅកាន់ Telegram Bot (Demo Mode) ដោយជោគជ័យ!',
+    });
+  }
+
+  try {
+    const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
+    const data = await tgRes.json();
+
+    if (data.ok && data.result) {
+      return res.json({
+        success: true,
+        mode: 'live',
+        bot: data.result,
+        message: `បានតភ្ជាប់ទៅកាន់ Bot @${data.result.username} ដោយជោគជ័យ!`,
+      });
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: data.description || 'Bot Token មិនត្រឹមត្រូវ ឬត្រូវបាន Revoke។',
+      });
+    }
+  } catch (err: any) {
+    return res.status(502).json({
+      success: false,
+      error: 'មិនអាចទាក់ទងទៅកាន់ Telegram API Servers បានទេ (Network error)',
+      details: err?.message || String(err),
+    });
+  }
+});
+
+app.post('/api/telegram/send-message', async (req: Request, res: Response) => {
+  const { botToken, chatId, text } = req.body || {};
+
+  if (!chatId || !text) {
+    return res.status(400).json({
+      success: false,
+      error: 'Chat ID និង Text Message មិនអាចទទេបានទេ។',
+    });
+  }
+
+  // If botToken provided, make actual request to Telegram API
+  if (botToken && botToken.trim() !== '' && botToken !== 'demo') {
+    try {
+      const tgRes = await fetch(`https://api.telegram.org/bot${botToken.trim()}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: text,
+        }),
+      });
+
+      const data = await tgRes.json();
+      if (data.ok) {
+        return res.json({
+          success: true,
+          mode: 'live',
+          result: data.result,
+          message: 'សារស្វ័យប្រវត្តិត្រូវបានផ្ញើទៅកាន់ Telegram ដោយជោគជ័យ!',
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: data.description || 'បរាជ័យក្នុងការផ្ញើសារតាម Telegram',
+        });
+      }
+    } catch (err: any) {
+      return res.status(502).json({
+        success: false,
+        error: 'Telegram API request failed',
+        details: err?.message,
+      });
+    }
+  }
+
+  // Simulation mode
+  return res.json({
+    success: true,
+    mode: 'simulation',
+    result: {
+      message_id: Math.floor(Math.random() * 899999) + 100000,
+      chat: { id: chatId },
+      date: Math.floor(Date.now() / 1000),
+      text,
+    },
+    message: '[Simulation] សារឆ្លើយតបស្វ័យប្រវត្តិក្លែងធ្វើត្រូវបានបញ្ជូនដោយជោគជ័យ!',
+  });
+});
+
 // Health check
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', tool: 'Wayback Machine, Rclone R2, CF Creator & Trend Analytics' });
+  res.json({
+    status: 'ok',
+    tools: [
+      'Wayback Machine Cloner',
+      'Rclone R2 Backup',
+      'Cloudflare Account Creator',
+      'Trend Analytics',
+      'Telegram Auto-Responder',
+    ],
+  });
 });
 
 // Vite middleware / static serving setup

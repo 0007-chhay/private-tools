@@ -24,6 +24,9 @@ export interface ParsedWaybackUrl {
   slug: string;
   isValid: boolean;
   error?: string;
+  isDirectAsset?: boolean;
+  fileName?: string;
+  assetType?: AssetType;
 }
 
 export type LogLevel = 'info' | 'fetch' | 'clean' | 'asset' | 'success' | 'warn' | 'error';

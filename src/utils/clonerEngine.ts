@@ -99,13 +99,55 @@ export async function executeCloneSite(
     const seenAssetKeys = new Set<string>();
     const downloadedAssets = new Map<string, ArrayBuffer | string>();
 
-    // 2. Fetch and clean HTML for each queued page
+    // 2. Fetch and process each queued page or direct asset
     for (let pageIdx = 0; pageIdx < targetList.length; pageIdx++) {
       if (signal.aborted) throw new Error('Aborted by user');
 
       const currentTarget = targetList[pageIdx];
       const pageNum = pageIdx + 1;
       const progressBase = 10 + Math.floor((pageIdx / targetList.length) * 30);
+
+      // Check if target is a direct image / media asset (e.g. .jpg, .png, im_ flag)
+      if (currentTarget.isDirectAsset) {
+        callbacks.onPhaseChange('fetching_assets');
+        const fileName = currentTarget.fileName || `asset_${pageNum}.jpg`;
+        callbacks.onProgress(
+          progressBase,
+          `Downloading media asset [${pageNum}/${targetList.length}]: ${fileName}...`
+        );
+        emitLog('fetch', `[Asset ${pageNum}] Downloading raw media/image: ${currentTarget.cleanRawUrl}`);
+
+        const assetFetch = await fetchViaProxy(currentTarget.cleanRawUrl, true, signal);
+        const binaryData = assetFetch.data as ArrayBuffer;
+        downloadedBytes += assetFetch.size;
+        completedCount++;
+        updateStats();
+
+        // Save under root with original filename, and also under images/
+        downloadedAssets.set(fileName, binaryData);
+        downloadedAssets.set(`images/${fileName}`, binaryData);
+
+        const directItem: AssetItem = {
+          id: `direct-asset-${pageIdx + 1}`,
+          originalUrl: currentTarget.originalUrl,
+          resolvedWaybackUrl: currentTarget.cleanRawUrl,
+          localPath: fileName,
+          type: currentTarget.assetType || 'image',
+          status: 'completed',
+          sizeBytes: assetFetch.size,
+          mimeType: assetFetch.contentType,
+        };
+
+        allDiscoveredAssets.push(directItem);
+        callbacks.onAssetUpdate([...allDiscoveredAssets]);
+
+        emitLog(
+          'success',
+          `[Asset ${pageNum}] Downloaded ${fileName} (${(assetFetch.size / 1024).toFixed(1)} KB) [${assetFetch.contentType || 'image'}]`
+        );
+
+        continue;
+      }
 
       callbacks.onPhaseChange('fetching_html');
       callbacks.onProgress(
@@ -179,9 +221,59 @@ export async function executeCloneSite(
       });
     }
 
+    // If only direct assets/images were queued, generate a clean responsive image gallery viewer index.html
+    if (clonedPages.length === 0 && allDiscoveredAssets.length > 0) {
+      const imagesHtml = allDiscoveredAssets
+        .map(
+          (a) => `
+        <div style="background:#18181b;border:1px solid #27272a;border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">
+          <h3 style="color:#e4e4e7;margin-bottom:12px;font-family:monospace;font-size:13px;word-break:break-all;">${a.localPath}</h3>
+          ${
+            a.type === 'image'
+              ? `<img src="${a.localPath}" alt="${a.localPath}" style="max-width:100%;height:auto;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.6);" />`
+              : `<p style="color:#a1a1aa;font-size:12px;">File Size: ${(a.sizeBytes / 1024).toFixed(1)} KB</p>`
+          }
+          <div style="margin-top:14px;">
+            <a href="${a.localPath}" download="${a.localPath}" style="display:inline-block;padding:8px 16px;background:#f59e0b;color:#09090b;text-decoration:none;border-radius:6px;font-weight:bold;font-size:12px;">Download File</a>
+          </div>
+        </div>
+      `
+        )
+        .join('\n');
+
+      const viewerHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wayback Media Gallery - ${primaryTarget.domain}</title>
+  <style>
+    body { background: #09090b; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; padding: 24px; margin: 0; }
+    .container { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 22px; color: #fbbf24; margin-bottom: 6px; }
+    p { font-size: 13px; color: #a1a1aa; margin-bottom: 24px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Archive Media Vault: ${primaryTarget.domain}</h1>
+    <p>Downloaded ${allDiscoveredAssets.length} asset(s) directly from Wayback Machine snapshot (${primaryTarget.formattedDate}).</p>
+    ${imagesHtml}
+  </div>
+</body>
+</html>`;
+
+      clonedPages.push({
+        filename: 'index.html',
+        title: `Archive Media Vault - ${primaryTarget.domain}`,
+        html: viewerHtml,
+        parsedUrl: primaryTarget,
+      });
+    }
+
     emitLog(
       'info',
-      `Discovered total of ${allDiscoveredAssets.length} unique assets across ${clonedPages.length} page(s)`
+      `Processed total of ${allDiscoveredAssets.length} asset(s) across ${clonedPages.length} package page(s)`
     );
 
     // 3. Download All Discovered Assets

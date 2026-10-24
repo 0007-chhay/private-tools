@@ -8,9 +8,16 @@ import {
   UserPlus,
   TrendingUp,
   BarChart3,
+  Send,
+  Download,
 } from 'lucide-react';
 
-export type ToolMode = 'wayback' | 'rclone_r2' | 'cf_accounts' | 'trend_analytics';
+export type ToolMode =
+  | 'wayback'
+  | 'rclone_r2'
+  | 'cf_accounts'
+  | 'trend_analytics'
+  | 'telegram_auto_reply';
 
 interface HeaderProps {
   currentTool: ToolMode;
@@ -28,9 +35,9 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Tool Mode Switcher with all 4 tools */}
-        <div className="flex items-center gap-3">
-          <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center gap-1 shadow-inner">
+        {/* Tool Mode Switcher with all 5 tools */}
+        <div className="flex items-center gap-3 overflow-x-auto py-1">
+          <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center gap-1 shadow-inner shrink-0">
             <button
               type="button"
               onClick={() => onSelectTool('wayback')}
@@ -86,9 +93,23 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">Trends &amp; Analytics</span>
               <span className="sm:hidden">Trends</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => onSelectTool('telegram_auto_reply')}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                currentTool === 'telegram_auto_reply'
+                  ? 'bg-sky-500 text-zinc-950 shadow font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+              }`}
+            >
+              <Send className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Telegram Auto-Reply</span>
+              <span className="sm:hidden">Telegram</span>
+            </button>
           </div>
 
-          <div className="hidden lg:block">
+          <div className="hidden xl:block">
             <p className="text-xs text-zinc-400 flex items-center gap-1.5 font-mono">
               {currentTool === 'wayback' ? (
                 <>
@@ -114,13 +135,21 @@ export const Header: React.FC<HeaderProps> = ({
                   <span aria-hidden="true" className="text-zinc-600">·</span>
                   <span>CSV Export</span>
                 </>
-              ) : (
+              ) : currentTool === 'trend_analytics' ? (
                 <>
                   <span>Viral Hashtags</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
                   <span>Trending Sounds</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
                   <span>Audience Peak Hours</span>
+                </>
+              ) : (
+                <>
+                  <span>Anti-Spam Filter</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Auto-Reply Engine</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Personal UserBot</span>
                 </>
               )}
             </p>
@@ -169,6 +198,18 @@ export const Header: React.FC<HeaderProps> = ({
               <span>TikTok &amp; Meta Organic Growth</span>
             </div>
           )}
+
+          {/* Download Project ZIP Button */}
+          <a
+            href="/api/download-project"
+            download="web-suite-pro.zip"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-zinc-950 font-bold text-xs shadow transition cursor-pointer shrink-0"
+            title="ទាញយក File កូដទាំងអស់នៃ Project នេះជា .ZIP"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Download ZIP</span>
+            <span className="sm:hidden">ZIP</span>
+          </a>
         </div>
       </div>
     </header>

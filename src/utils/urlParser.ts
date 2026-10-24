@@ -1,4 +1,74 @@
-import { ParsedWaybackUrl } from '../types';
+import { AssetType, ParsedWaybackUrl } from '../types';
+
+/**
+ * Detect whether a URL is a direct media/image asset and extract filename and asset type
+ */
+export function detectAssetMetadata(
+  urlStr: string,
+  flag?: string
+): { isDirectAsset: boolean; fileName: string; assetType: AssetType } {
+  try {
+    const clean = urlStr.split('?')[0].split('#')[0].toLowerCase();
+    const parsed = new URL(urlStr.startsWith('http') ? urlStr : `https://${urlStr}`);
+    const pathname = decodeURIComponent(parsed.pathname);
+    let fileName = pathname.split('/').filter(Boolean).pop() || 'asset';
+    fileName = fileName.split('?')[0].split('#')[0];
+
+    const isImage =
+      clean.endsWith('.jpg') ||
+      clean.endsWith('.jpeg') ||
+      clean.endsWith('.png') ||
+      clean.endsWith('.webp') ||
+      clean.endsWith('.gif') ||
+      clean.endsWith('.svg') ||
+      clean.endsWith('.ico') ||
+      clean.endsWith('.bmp') ||
+      clean.endsWith('.avif') ||
+      flag === 'im_';
+
+    const isMedia =
+      clean.endsWith('.mp4') ||
+      clean.endsWith('.webm') ||
+      clean.endsWith('.mp3') ||
+      clean.endsWith('.ogg') ||
+      clean.endsWith('.wav');
+
+    const isFont =
+      clean.endsWith('.woff') ||
+      clean.endsWith('.woff2') ||
+      clean.endsWith('.ttf') ||
+      clean.endsWith('.otf') ||
+      clean.endsWith('.eot');
+
+    const isPdf = clean.endsWith('.pdf') || clean.endsWith('.zip');
+    const isCss = clean.endsWith('.css') || flag === 'cs_';
+    const isJs = clean.endsWith('.js') || flag === 'js_';
+
+    if (isImage) {
+      if (!fileName.includes('.')) fileName += '.jpg';
+      return { isDirectAsset: true, fileName, assetType: 'image' };
+    }
+    if (isMedia) {
+      return { isDirectAsset: true, fileName, assetType: 'media' };
+    }
+    if (isFont) {
+      return { isDirectAsset: true, fileName, assetType: 'font' };
+    }
+    if (isPdf) {
+      return { isDirectAsset: true, fileName, assetType: 'other' };
+    }
+    if (isCss) {
+      return { isDirectAsset: true, fileName, assetType: 'css' };
+    }
+    if (isJs) {
+      return { isDirectAsset: true, fileName, assetType: 'js' };
+    }
+
+    return { isDirectAsset: false, fileName: 'index.html', assetType: 'html' };
+  } catch {
+    return { isDirectAsset: false, fileName: 'index.html', assetType: 'html' };
+  }
+}
 
 /**
  * Format a 14-digit Wayback timestamp (YYYYMMDDhhmmss) into a human-readable date
@@ -49,6 +119,7 @@ export function parseWaybackUrl(input: string): ParsedWaybackUrl {
   // Examples:
   // https://web.archive.org/web/20260315113250/https://www.dpscjhargram.com/
   // https://web.archive.org/web/20260315113250id_/http://example.com/
+  // https://web.archive.org/web/20230716171621im_/https://www.siamklongfilm.com/.../slide_1_1024x1024.jpg
   // web.archive.org/web/20200501120000cs_/example.com
   const waybackPattern =
     /(?:https?:\/\/)?(?:web\.)?archive\.org\/web\/(\d{4,14})([a-z_]{2,4}|\*)?\/(https?:\/\/.*|http:\/\/.*|.*)/i;
@@ -57,7 +128,7 @@ export function parseWaybackUrl(input: string): ParsedWaybackUrl {
 
   if (match) {
     const timestamp = match[1];
-    // match[2] is the flag (id_, cs_, js_, im_, *, etc.)
+    const flag = match[2]; // id_, cs_, js_, im_, *, etc.
     let rawOriginalUrl = match[3];
 
     // Ensure original URL has protocol
@@ -65,13 +136,18 @@ export function parseWaybackUrl(input: string): ParsedWaybackUrl {
       rawOriginalUrl = `https://${rawOriginalUrl}`;
     }
 
+    const { isDirectAsset, fileName, assetType } = detectAssetMetadata(rawOriginalUrl, flag);
+
     try {
       const parsedOriginal = new URL(rawOriginalUrl);
       const domain = parsedOriginal.hostname;
-      const cleanRawUrl = `https://web.archive.org/web/${timestamp}id_/${rawOriginalUrl}`;
+      const chosenFlag = flag || (assetType === 'image' ? 'im_' : 'id_');
+      const cleanRawUrl = `https://web.archive.org/web/${timestamp}${chosenFlag}/${rawOriginalUrl}`;
       const slugDate = timestamp.slice(0, 8);
       const cleanDomain = domain.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-      const slug = `${cleanDomain}-${slugDate}`;
+      const slug = isDirectAsset
+        ? `${cleanDomain}-${fileName.replace(/[^a-z0-9._-]/gi, '_')}`
+        : `${cleanDomain}-${slugDate}`;
 
       return {
         rawInput: trimmed,
@@ -82,18 +158,25 @@ export function parseWaybackUrl(input: string): ParsedWaybackUrl {
         cleanRawUrl,
         slug,
         isValid: true,
+        isDirectAsset,
+        fileName,
+        assetType,
       };
     } catch {
       // URL parsing failed
+      const chosenFlag = flag || (assetType === 'image' ? 'im_' : 'id_');
       return {
         rawInput: trimmed,
         timestamp,
         formattedDate: formatWaybackTimestamp(timestamp),
         originalUrl: rawOriginalUrl,
         domain: rawOriginalUrl.split('/')[0] || 'site',
-        cleanRawUrl: `https://web.archive.org/web/${timestamp}id_/${rawOriginalUrl}`,
+        cleanRawUrl: `https://web.archive.org/web/${timestamp}${chosenFlag}/${rawOriginalUrl}`,
         slug: `site-${timestamp}`,
         isValid: true,
+        isDirectAsset,
+        fileName,
+        assetType,
       };
     }
   }
