@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Sparkles,
   Image as ImageIcon,
@@ -22,7 +22,20 @@ import {
   Zap,
   Sliders,
   RefreshCw,
+  Key,
+  Settings,
+  ShieldCheck,
+  CheckCircle2,
+  X,
 } from 'lucide-react';
+import {
+  generateSpeechAudio,
+  generateImageAI,
+  generateVideoStoryboardAI,
+  generateScriptBrainAI,
+  getStoredApiKey,
+  saveStoredApiKey,
+} from '../services/aiService';
 
 type AISubTab = 'image' | 'tts' | 'video' | 'prompt_brain';
 
@@ -134,6 +147,22 @@ export const SuperIntelligentView: React.FC = () => {
   const [brainResult, setBrainResult] = useState<string | null>(null);
   const [copiedBrain, setCopiedBrain] = useState(false);
 
+  // --- API Key Modal State ---
+  const [isKeyModalOpen, setIsKeyModalOpen] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState(() => getStoredApiKey());
+  const [hasApiKey, setHasApiKey] = useState(() => Boolean(getStoredApiKey()));
+  const [keySavedToast, setKeySavedToast] = useState(false);
+
+  const handleSaveApiKey = () => {
+    saveStoredApiKey(apiKeyInput);
+    setHasApiKey(Boolean(apiKeyInput.trim()));
+    setKeySavedToast(true);
+    setTimeout(() => {
+      setKeySavedToast(false);
+      setIsKeyModalOpen(false);
+    }, 1200);
+  };
+
   // --- Handlers: Generate Image ---
   const handleGenerateImage = async () => {
     if (!imagePrompt.trim()) return;
@@ -141,24 +170,10 @@ export const SuperIntelligentView: React.FC = () => {
     setImageError(null);
 
     try {
-      const res = await fetch('/api/ai/image-generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: imagePrompt,
-          aspectRatio,
-          style: imageStyle,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || data.details || 'Failed to generate image');
-      }
-
+      const result = await generateImageAI(imagePrompt, aspectRatio, imageStyle);
       const newImage: GeneratedImage = {
         id: 'img-' + Date.now(),
-        url: data.imageUrl,
+        url: result.imageUrl,
         prompt: imagePrompt,
         aspectRatio,
         style: imageStyle,
@@ -182,26 +197,12 @@ export const SuperIntelligentView: React.FC = () => {
     setTtsError(null);
 
     try {
-      const res = await fetch('/api/ai/text-to-speech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: ttsText,
-          voiceName,
-          style: speechStyle,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || data.details || 'Failed to generate audio');
-      }
-
+      const result = await generateSpeechAudio(ttsText, voiceName, speechStyle);
       const newAudio: GeneratedAudio = {
         id: 'audio-' + Date.now(),
-        url: data.audioUrl,
+        url: result.audioUrl,
         text: ttsText,
-        voiceName,
+        voiceName: result.voiceName,
         style: speechStyle,
         createdAt: new Date().toLocaleTimeString(),
       };
@@ -210,7 +211,7 @@ export const SuperIntelligentView: React.FC = () => {
       playAudio(newAudio.id, newAudio.url);
     } catch (err: any) {
       console.error(err);
-      setTtsError(err.message || 'បញ្ហាក្នុងការបង្កើតសំឡេង។ សូមសាកល្បងម្ដងទៀត។');
+      setTtsError(err.message || 'បញ្ហាក្នុងការបង្កើតសំឡេង។');
     } finally {
       setIsGeneratingTts(false);
     }
@@ -245,7 +246,10 @@ export const SuperIntelligentView: React.FC = () => {
         return;
       }
       audioPlayerRef.current.src = url;
-      audioPlayerRef.current.play();
+      audioPlayerRef.current.play().catch((err) => {
+        console.warn('Audio play failed, falling back to Web Speech:', err);
+        handleLiveVoicePreview();
+      });
       setCurrentPlayingId(id);
     }
   };
@@ -257,23 +261,9 @@ export const SuperIntelligentView: React.FC = () => {
     setVideoError(null);
 
     try {
-      const res = await fetch('/api/ai/video-generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: videoPrompt,
-          duration: videoDuration,
-          cameraMovement: cameraMotion,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || data.details || 'Failed to generate video storyboard');
-      }
-
-      if (data.scenes && Array.isArray(data.scenes)) {
-        setVideoScenes(data.scenes);
+      const scenes = await generateVideoStoryboardAI(videoPrompt, videoDuration, cameraMotion);
+      if (scenes && Array.isArray(scenes)) {
+        setVideoScenes(scenes);
       }
     } catch (err: any) {
       console.error(err);
@@ -289,22 +279,8 @@ export const SuperIntelligentView: React.FC = () => {
     setIsGeneratingBrain(true);
 
     try {
-      const res = await fetch('/api/ai/text-generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idea: brainIdea,
-          format: brainOutputFormat,
-          language: brainLanguage,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to generate content');
-      }
-
-      setBrainResult(data.content);
+      const content = await generateScriptBrainAI(brainIdea, brainOutputFormat, brainLanguage);
+      setBrainResult(content);
     } catch (err: any) {
       setBrainResult('កំហុសក្នុងការបង្កើត៖ ' + err.message);
     } finally {
@@ -344,9 +320,20 @@ export const SuperIntelligentView: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs font-medium text-emerald-400">Gemini 3.8 Engine Active</span>
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsKeyModalOpen(true)}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-amber-500/40 hover:border-amber-400 text-amber-300 text-xs font-semibold transition cursor-pointer shadow-sm"
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>{hasApiKey ? 'Gemini Key: Active' : 'កំណត់ API Key'}</span>
+              <Settings className="w-3 h-3 text-zinc-400" />
+            </button>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-950/80 border border-emerald-500/30">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[11px] font-medium text-emerald-400">Multi-Tier AI Ready</span>
+            </div>
           </div>
         </div>
 
@@ -1188,6 +1175,129 @@ export const SuperIntelligentView: React.FC = () => {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* GEMINI API KEY & VERCEL CONFIGURATION MODAL */}
+      {/* ======================================================== */}
+      {isKeyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-lg bg-zinc-900 border border-amber-500/40 rounded-2xl p-6 shadow-2xl text-left space-y-5">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <Key className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">កំណត់ Gemini API Key</h3>
+                  <p className="text-xs text-zinc-400">សម្រាប់ដំណើរការលើ Vercel ឬ Local Host</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsKeyModalOpen(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
+                  Gemini API Key (ផ្ទាល់ខ្លួន)៖
+                </label>
+                <div className="relative">
+                  <input
+                    type="password"
+                    value={apiKeyInput}
+                    onChange={(e) => setApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
+                  />
+                  {apiKeyInput && (
+                    <button
+                      type="button"
+                      onClick={() => setApiKeyInput('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-300"
+                    >
+                      លុប
+                    </button>
+                  )}
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-1">
+                  API Key នឹងត្រូវរក្សាទុកដោយសុវត្ថិភាពក្នុង Browser របស់អ្នក (LocalStorage)។
+                </p>
+              </div>
+
+              {/* Instructions on getting free Gemini Key */}
+              <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-amber-400">
+                    💡 របៀបយក API Key ឥតគិតថ្លៃ (Free 100%)៖
+                  </span>
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:underline"
+                  >
+                    <span>បើក Google AI Studio</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside leading-relaxed">
+                  <li>ចូលទៅកាន់ <b className="text-zinc-300">Google AI Studio</b> (aistudio.google.com/app/apikey)</li>
+                  <li>ចុចប៊ូតុង <b className="text-zinc-300">&quot;Create API Key&quot;</b></li>
+                  <li>Copy Key នោះមកបិទភ្ជាប់ (Paste) ក្នុងប្រអប់ខាងលើ រួចចុច Save</li>
+                </ol>
+              </div>
+
+              {/* Vercel instructions */}
+              <div className="bg-amber-950/20 border border-amber-500/20 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+                  <ShieldCheck className="w-4 h-4 text-amber-400" />
+                  <span>វិធីដាក់ចូល Vercel Dashboard (អចិន្ត្រៃយ៍)៖</span>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  នៅលើ Vercel Dashboard គម្រោងរបស់អ្នក ចូលទៅកាន់ <b className="text-zinc-300">Settings</b> &gt; <b className="text-zinc-300">Environment Variables</b> ហើយបន្ថែមឈ្មោះ <code className="text-amber-300 bg-zinc-900 px-1 py-0.5 rounded">GEMINI_API_KEY</code> និង <code className="text-amber-300 bg-zinc-900 px-1 py-0.5 rounded">VITE_GEMINI_API_KEY</code> ដាក់តម្លៃ API Key របស់អ្នក រួច Redeploy!
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+              <div className="text-xs">
+                {keySavedToast ? (
+                  <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium">
+                    <CheckCircle2 className="w-4 h-4" />
+                    បានរក្សាទុកដោយជោគជ័យ!
+                  </span>
+                ) : (
+                  <span className="text-zinc-500">
+                    {hasApiKey ? '✅ Key ត្រូវបានភ្ជាប់រួចរាល់' : '⚡ អាចដំណើរការ fallback mode ដោយស្វ័យប្រវត្តិ'}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsKeyModalOpen(false)}
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition"
+                >
+                  បិទ
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveApiKey}
+                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-xl text-xs transition shadow-lg shadow-amber-500/20 cursor-pointer"
+                >
+                  រក្សាទុក (Save Key)
+                </button>
+              </div>
             </div>
           </div>
         </div>
