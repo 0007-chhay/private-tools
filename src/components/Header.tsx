@@ -9,10 +9,13 @@ import {
   TrendingUp,
   BarChart3,
   Send,
-  Download,
+  LayoutGrid,
+  Sparkles,
 } from 'lucide-react';
 
 export type ToolMode =
+  | 'all_tools'
+  | 'super_intelligent'
   | 'wayback'
   | 'rclone_r2'
   | 'cf_accounts'
@@ -35,9 +38,42 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="border-b border-zinc-800 bg-zinc-950/90 backdrop-blur-md sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Tool Mode Switcher with all 5 tools */}
-        <div className="flex items-center gap-3 overflow-x-auto py-1">
+        {/* Tool Mode Switcher with all 6 tools + All Tools Hub */}
+        <div className="flex items-center gap-3 overflow-x-auto no-scrollbar py-1">
           <div className="p-1 bg-zinc-900 border border-zinc-800 rounded-xl flex items-center gap-1 shadow-inner shrink-0">
+            {/* All Tools Hub button */}
+            <button
+              type="button"
+              onClick={() => onSelectTool('all_tools')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                currentTool === 'all_tools'
+                  ? 'bg-amber-500 text-zinc-950 shadow font-bold'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
+              }`}
+              title="All Tools Dashboard"
+            >
+              <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+              <span>All Tools</span>
+            </button>
+
+            {/* Super-Intelligent AI Studio button */}
+            <button
+              type="button"
+              onClick={() => onSelectTool('super_intelligent')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                currentTool === 'super_intelligent'
+                  ? 'bg-gradient-to-r from-amber-500 to-amber-400 text-zinc-950 shadow font-bold'
+                  : 'text-amber-400 hover:text-amber-300 hover:bg-zinc-850'
+              }`}
+              title="Super-Intelligent AI Studio"
+            >
+              <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Super-Intelligent</span>
+              <span className="sm:hidden">Super-AI</span>
+            </button>
+
+            <div className="w-[1px] h-4 bg-zinc-800 mx-0.5" />
+
             <button
               type="button"
               onClick={() => onSelectTool('wayback')}
@@ -111,7 +147,25 @@ export const Header: React.FC<HeaderProps> = ({
 
           <div className="hidden xl:block">
             <p className="text-xs text-zinc-400 flex items-center gap-1.5 font-mono">
-              {currentTool === 'wayback' ? (
+              {currentTool === 'all_tools' ? (
+                <>
+                  <span className="text-amber-400 font-semibold">6 Tools Hub</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Direct Navigation</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Automations &amp; Cloners</span>
+                </>
+              ) : currentTool === 'super_intelligent' ? (
+                <>
+                  <span className="text-amber-400 font-semibold">Gemini AI Studio</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Images 8K</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>TTS 24kHz</span>
+                  <span aria-hidden="true" className="text-zinc-600">·</span>
+                  <span>Video Storyboard</span>
+                </>
+              ) : currentTool === 'wayback' ? (
                 <>
                   <span>id_ extractor</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
@@ -158,7 +212,12 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action controls */}
         <div className="flex items-center gap-3">
-          {currentTool === 'wayback' ? (
+          {currentTool === 'all_tools' ? (
+            <div className="hidden sm:flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">
+              <LayoutGrid className="w-3.5 h-3.5 text-amber-400" />
+              <span>Dashboard Hub</span>
+            </div>
+          ) : currentTool === 'wayback' ? (
             <>
               <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
@@ -192,24 +251,17 @@ export const Header: React.FC<HeaderProps> = ({
               <UserPlus className="w-3.5 h-3.5 text-amber-400" />
               <span>Bulk Cloudflare Accounts</span>
             </div>
-          ) : (
+          ) : currentTool === 'trend_analytics' ? (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">
               <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
               <span>TikTok &amp; Meta Organic Growth</span>
             </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">
+              <Send className="w-3.5 h-3.5 text-sky-400" />
+              <span>Telegram Anti-Spam</span>
+            </div>
           )}
-
-          {/* Download Project ZIP Button */}
-          <a
-            href="/api/download-project"
-            download="web-suite-pro.zip"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-zinc-950 font-bold text-xs shadow transition cursor-pointer shrink-0"
-            title="ទាញយក File កូដទាំងអស់នៃ Project នេះជា .ZIP"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Download ZIP</span>
-            <span className="sm:hidden">ZIP</span>
-          </a>
         </div>
       </div>
     </header>

@@ -11,6 +11,8 @@ import { R2BackupView } from './components/R2BackupView';
 import { CFAccountCreatorView } from './components/CFAccountCreatorView';
 import { TrendAnalyticsView } from './components/TrendAnalyticsView';
 import { TelegramAutoReplyView } from './components/TelegramAutoReplyView';
+import { AllToolsGridView } from './components/AllToolsGridView';
+import { SuperIntelligentView } from './components/SuperIntelligentView';
 import {
   AssetItem,
   CloneConfig,
@@ -26,6 +28,7 @@ import {
   Eye,
   AlertCircle,
   Zap,
+  ArrowLeft,
 } from 'lucide-react';
 
 const DEFAULT_CONFIG: CloneConfig = {
@@ -41,8 +44,8 @@ const DEFAULT_CONFIG: CloneConfig = {
 };
 
 export default function App() {
-  // Default tool: Wayback Site Cloner as requested
-  const [currentTool, setCurrentTool] = useState<ToolMode>('wayback');
+  // Default tool: All Tools Hub to match user's requested dashboard
+  const [currentTool, setCurrentTool] = useState<ToolMode>('all_tools');
 
   // Input state
   const [inputUrlText, setInputUrlText] = useState<string>('');
@@ -170,30 +173,54 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {currentTool === 'telegram_auto_reply' ? (
-          /* Mode 5: Telegram Auto-Reply & Anti-Spam Deflector */
-          <TelegramAutoReplyView />
-        ) : currentTool === 'trend_analytics' ? (
-          /* Mode 4: Viral Trends, Hashtags & TikTok Analytics */
-          <TrendAnalyticsView />
-        ) : currentTool === 'cf_accounts' ? (
-          /* Mode 3: Cloudflare 100+ Account Creator */
-          <CFAccountCreatorView />
-        ) : currentTool === 'rclone_r2' ? (
-          /* Mode 2: Rclone & Cloudflare R2 Backup */
-          <R2BackupView />
+        {currentTool === 'all_tools' ? (
+          /* Hub: All Tools Grid View (matching user reference image) */
+          <AllToolsGridView onSelectTool={setCurrentTool} />
         ) : (
-          /* Mode 1: Wayback Machine Site Cloner */
+          /* Individual Tool View with Breadcrumb */
           <>
-            {/* Input & Extraction Setup */}
-            <UrlInputSection
-              inputUrlText={inputUrlText}
-              onInputChange={setInputUrlText}
-              parsedUrls={parsedUrls}
-              isCloning={isCloning}
-              onStartCloning={handleStartCloning}
-              onAbortCloning={handleAbortCloning}
-            />
+            <div className="flex items-center justify-between pb-1 -mt-2">
+              <button
+                type="button"
+                onClick={() => setCurrentTool('all_tools')}
+                className="inline-flex items-center gap-2 text-xs font-semibold text-zinc-300 hover:text-amber-400 transition cursor-pointer bg-zinc-900/80 hover:bg-zinc-850 px-3 py-1.5 rounded-xl border border-zinc-800"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>All Tools Dashboard</span>
+              </button>
+
+              <span className="text-xs text-zinc-500 font-mono hidden sm:inline">
+                Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[10px] text-zinc-400">All Tools</kbd> in header to switch anytime
+              </span>
+            </div>
+
+            {currentTool === 'super_intelligent' ? (
+              /* Mode: Super-Intelligent AI Studio */
+              <SuperIntelligentView />
+            ) : currentTool === 'telegram_auto_reply' ? (
+              /* Mode 5: Telegram Auto-Reply & Anti-Spam Deflector */
+              <TelegramAutoReplyView />
+            ) : currentTool === 'trend_analytics' ? (
+              /* Mode 4: Viral Trends, Hashtags & TikTok Analytics */
+              <TrendAnalyticsView />
+            ) : currentTool === 'cf_accounts' ? (
+              /* Mode 3: Cloudflare 100+ Account Creator */
+              <CFAccountCreatorView />
+            ) : currentTool === 'rclone_r2' ? (
+              /* Mode 2: Rclone & Cloudflare R2 Backup */
+              <R2BackupView />
+            ) : (
+              /* Mode 1: Wayback Machine Site Cloner */
+              <>
+                {/* Input & Extraction Setup */}
+                <UrlInputSection
+                  inputUrlText={inputUrlText}
+                  onInputChange={setInputUrlText}
+                  parsedUrls={parsedUrls}
+                  isCloning={isCloning}
+                  onStartCloning={handleStartCloning}
+                  onAbortCloning={handleAbortCloning}
+                />
 
             {/* Error Notification */}
             {cloneError && (
@@ -361,6 +388,8 @@ export default function App() {
                 </p>
               </div>
             </section>
+          </>
+        )}
           </>
         )}
       </main>
