@@ -1,5 +1,5 @@
 # Web Suite Pro 🚀
-### Wayback Site Cloner, Cloudflare R2 / S3 Rclone Backup, Cloudflare Account Manager & Viral Trends Analytics
+### Wayback Site Cloner, Cloudflare R2 / S3 Rclone Backup, Bulk Password Generator & Viral Trends Analytics
 
 A comprehensive webmaster, storage automation, and content creator productivity suite built with React 19, TypeScript, Express, and Tailwind CSS.
 
@@ -16,14 +16,13 @@ A comprehensive webmaster, storage automation, and content creator productivity 
 ### 2. 🗄️ Rclone CLI & Cloudflare R2 / S3 Storage Backup
 - **rclone.conf Generator:** Instantly generates configured `rclone.conf` credentials with one-click copy and `.conf` file download.
 - **S3 & R2 Credential Verification:** Validates Account ID, Access Key ID, and Secret Access Key against Cloudflare R2 or AWS S3 endpoints.
-- **One-Click Backup Commands:** Ready-to-use CLI sync commands (e.g., `rclone sync cloudflare-r2:my-bucket ./r2-backup --progress`).
+- **One-Click Backup Commands:** Ready-to-use CLI commands (e.g., `rclone copy cloudflare-r2:my-bucket ./r2-backup --progress`). Uses `copy`, not `sync`, so nothing at the destination is deleted.
 - **Interactive Bucket Explorer:** Browse buckets, inspect file sizes, and simulate cloud sync operations.
 
-### 3. ☁️ Cloudflare Batch Account Creator & Token Provisioner
-- **Batch Generator:** Generate multiple accounts with custom prefixes, custom domains, and secure passwords.
-- **API Account Provisioning:** Integrates with Cloudflare Enterprise/Tenant API endpoints (`/client/v4/accounts`).
-- **Token Assistant:** Step-by-step guidance for setting up API Tokens, Global Keys, and bypassing bot verification manually.
-- **Data Export:** Export account credentials as CSV or JSON for safe record-keeping.
+### 3. 🔑 Bulk Password Generator
+- **Email list input:** Paste up to 1,000 emails (one per line, or comma/space separated). Invalid entries and duplicates are flagged and skipped.
+- **Crypto-secure passwords:** Generated in the browser with `crypto.getRandomValues` (unbiased), with options for length, character sets, and excluding look-alike characters.
+- **TXT download:** Copy the list or download it as `email:password`, `email | password`, `email,password`, or tab-separated text. Nothing is sent to the server.
 
 ### 4. 📈 Viral Trends & TikTok Audience Analytics
 - **Live Trends & Hashtag Scraper:** Real-time trending hashtags, view counts, and 7-day virality growth rates across Cambodia (🇰🇭), SEA, Thailand, Vietnam, US, and Global.
@@ -100,7 +99,7 @@ git init
 git add .
 
 # 3. Commit files ដំបូង
-git commit -m "feat: complete Web Suite Pro with Wayback Cloner, Rclone R2, CF Creator, and Live Trends"
+git commit -m "feat: complete Web Suite Pro with Wayback Cloner, Rclone R2, Password Generator, and Live Trends"
 
 # 4. ប្តូរ branch ទៅ main
 git branch -M main

@@ -35,6 +35,7 @@ import {
   generateScriptBrainAI,
   getStoredApiKey,
   saveStoredApiKey,
+  testGeminiApiKey,
 } from '../services/aiService';
 
 type AISubTab = 'image' | 'tts' | 'video' | 'prompt_brain';
@@ -138,6 +139,32 @@ export const SuperIntelligentView: React.FC = () => {
       soundEffect: 'Impact boom with cinematic rising orchestral chord',
     },
   ]);
+  const [copiedSceneId, setCopiedSceneId] = useState<number | null>(null);
+
+  const downloadStoryboardTxt = () => {
+    const content = videoScenes
+      .map(
+        (s) =>
+`========================================
+SCENE #${s.sceneNumber} (${s.timeRange})
+========================================
+- Visual Cue: ${s.visualPrompt}
+- Camera Motion: ${s.cameraMovement}
+- Voiceover (សំឡេងនិយាយ): ${s.voiceoverText}
+- Sound Effect: ${s.soundEffect}
+- AI Video Tool Prompt (សម្រាប់ Runway / Kling / Luma):
+  ${s.visualPrompt}, ${s.cameraMovement}, ultra realistic, 8k resolution, cinematic lighting`
+      )
+      .join('\n\n');
+
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `storyboard-production-plan-${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // --- 4. Prompt Brain State ---
   const [brainIdea, setBrainIdea] = useState('');
@@ -152,6 +179,8 @@ export const SuperIntelligentView: React.FC = () => {
   const [apiKeyInput, setApiKeyInput] = useState(() => getStoredApiKey());
   const [hasApiKey, setHasApiKey] = useState(() => Boolean(getStoredApiKey()));
   const [keySavedToast, setKeySavedToast] = useState(false);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; model?: string } | null>(null);
 
   const handleSaveApiKey = () => {
     saveStoredApiKey(apiKeyInput);
@@ -161,6 +190,27 @@ export const SuperIntelligentView: React.FC = () => {
       setKeySavedToast(false);
       setIsKeyModalOpen(false);
     }, 1200);
+  };
+
+  const handleTestKey = async () => {
+    if (!apiKeyInput.trim()) {
+      setTestResult({ ok: false, message: 'សូមបញ្ចូល API Key មុននឹងធ្វើតេស្ត!' });
+      return;
+    }
+    setIsTestingKey(true);
+    setTestResult(null);
+    try {
+      const res = await testGeminiApiKey(apiKeyInput);
+      setTestResult(res);
+      if (res.ok) {
+        saveStoredApiKey(apiKeyInput);
+        setHasApiKey(true);
+      }
+    } catch (err: any) {
+      setTestResult({ ok: false, message: err.message || 'បញ្ហាក្នុងការតេស្ត API Key' });
+    } finally {
+      setIsTestingKey(false);
+    }
   };
 
   // --- Handlers: Generate Image ---
@@ -324,15 +374,21 @@ export const SuperIntelligentView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsKeyModalOpen(true)}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-amber-500/40 hover:border-amber-400 text-amber-300 text-xs font-semibold transition cursor-pointer shadow-sm"
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer shadow-sm ${
+                hasApiKey
+                  ? 'bg-emerald-950/70 hover:bg-emerald-900/90 border-emerald-500/60 text-emerald-300 ring-1 ring-emerald-500/30'
+                  : 'bg-zinc-900/90 hover:bg-zinc-800 border-amber-500/40 hover:border-amber-400 text-amber-300'
+              }`}
             >
-              <Key className="w-3.5 h-3.5 text-amber-400" />
-              <span>{hasApiKey ? 'Gemini Key: Active' : 'កំណត់ API Key'}</span>
+              <Key className={`w-3.5 h-3.5 ${hasApiKey ? 'text-emerald-400' : 'text-amber-400'}`} />
+              <span>{hasApiKey ? 'Gemini Pro: Active ✅' : 'កំណត់ API Key'}</span>
               <Settings className="w-3 h-3 text-zinc-400" />
             </button>
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-950/80 border border-emerald-500/30">
               <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span className="text-[11px] font-medium text-emerald-400">Multi-Tier AI Ready</span>
+              <span className="text-[11px] font-medium text-emerald-400">
+                {hasApiKey ? 'Gemini Pro/Paid Connected' : 'Multi-Tier AI Ready'}
+              </span>
             </div>
           </div>
         </div>
@@ -933,74 +989,186 @@ export const SuperIntelligentView: React.FC = () => {
           </div>
 
           {/* Storyboard Timeline Display */}
-          <div className="space-y-3">
-            <h3 className="text-sm font-bold text-white flex items-center justify-between">
-              <span className="flex items-center gap-2">
+          <div className="space-y-4">
+            {/* Production Workflow Guide Banner */}
+            <div className="bg-gradient-to-r from-amber-950/40 via-zinc-900 to-zinc-900 border border-amber-500/30 rounded-xl p-4 space-y-2.5 shadow-md">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-300">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  <span>💡 បង្កើត Storyboard បានហើយ តើយកទៅណា ឬប្រើប្រាស់ដូចម្តេច?</span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  3-Step Production
+                </span>
+              </div>
+              <p className="text-xs text-zinc-300 leading-relaxed">
+                Storyboard នេះជា <b className="text-amber-400">ប្លង់មេផលិតកម្ម (Production Blueprint)</b> សម្រាប់យកទៅផលិតជាវីដេអូពិតប្រាកដ (TikTok, Reels, Shorts, Commercial) តាម ៣ ជំហានងាយៗ៖
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                <div className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-2.5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-400">
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>១. យកសំឡេង AI (TTS)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-normal">
+                    ចុចប៊ូតុង "🎙️ យកសំឡេង" លើ Scene នីមួយៗដើម្បីឱ្យ AI អាន រួច Download File .wav ទុក។
+                  </p>
+                </div>
+                <div className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-2.5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-amber-400">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span>២. យករូបភាព ឬ Motion</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-normal">
+                    ចុច "🖼️ យករូបភាព" ឬ Copy Prompt យកទៅដាក់ក្នុង Runway, Kling AI, Luma Dream Machine។
+                  </p>
+                </div>
+                <div className="bg-zinc-950/70 border border-zinc-800 rounded-lg p-2.5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-400">
+                    <Film className="w-3.5 h-3.5" />
+                    <span>៣. កាត់តលើ CapCut</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-normal">
+                    បើក CapCut ដាក់សំឡេង + រូបភាព/វីដេអូតាម Timeline នីមួយៗ រួច Export បង្ហោះលើ TikTok/Reels!
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
                 <Film className="w-4 h-4 text-amber-400" />
                 <span>Cinematic Timeline Storyboard ({videoScenes.length} Scenes)</span>
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  copyToClipboard(
-                    videoScenes
-                      .map(
-                        (s) =>
-                          `Scene ${s.sceneNumber} (${s.timeRange}):\nVisual: ${s.visualPrompt}\nCamera: ${s.cameraMovement}\nVoiceover: ${s.voiceoverText}\nSFX: ${s.soundEffect}\n`
-                      )
-                      .join('\n---\n')
-                  )
-                }
-                className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold cursor-pointer"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                <span>ចម្លង Storyboard ទាំងអស់</span>
-              </button>
-            </h3>
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={downloadStoryboardTxt}
+                  className="text-xs bg-zinc-850 hover:bg-zinc-800 text-amber-300 border border-amber-500/40 px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-semibold cursor-pointer transition shadow-sm"
+                  title="ទាញយក Storyboard ទាំងអស់ជាឯកសារ .txt"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>ទាញយក Storyboard (.txt)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    copyToClipboard(
+                      videoScenes
+                        .map(
+                          (s) =>
+                            `Scene ${s.sceneNumber} (${s.timeRange}):\nVisual: ${s.visualPrompt}\nCamera: ${s.cameraMovement}\nVoiceover: ${s.voiceoverText}\nSFX: ${s.soundEffect}\n`
+                        )
+                        .join('\n---\n')
+                    )
+                  }
+                  className="text-xs text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-750 px-3 py-1.5 rounded-lg border border-zinc-700 flex items-center gap-1 font-semibold cursor-pointer transition"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  <span>ចម្លងទាំងអស់</span>
+                </button>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {videoScenes.map((scene) => (
                 <div
                   key={scene.sceneNumber}
-                  className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3 hover:border-amber-500/50 transition relative overflow-hidden group shadow-lg"
+                  className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3 hover:border-amber-500/50 transition relative overflow-hidden group shadow-lg flex flex-col justify-between"
                 >
-                  <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
-                    <span className="text-xs font-bold text-amber-400">
-                      Scene #{scene.sceneNumber}
-                    </span>
-                    <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] font-mono rounded">
-                      {scene.timeRange}
-                    </span>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <span className="text-xs font-bold text-amber-400">
+                        Scene #{scene.sceneNumber}
+                      </span>
+                      <span className="px-2 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] font-mono rounded">
+                        {scene.timeRange}
+                      </span>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
+                          Visual Cue:
+                        </span>
+                        <p className="text-zinc-200 mt-0.5 leading-relaxed">{scene.visualPrompt}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-amber-400/90 uppercase tracking-wider block">
+                          Camera Motion:
+                        </span>
+                        <p className="text-zinc-300 mt-0.5 font-medium">{scene.cameraMovement}</p>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
+                          Voiceover (សំឡេងនិយាយ):
+                        </span>
+                        <p className="text-emerald-300 mt-0.5 italic">"{scene.voiceoverText}"</p>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
+                          Sound FX:
+                        </span>
+                        <p className="text-indigo-300 mt-0.5 font-mono text-[11px]">{scene.soundEffect}</p>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="space-y-2 text-xs">
-                    <div>
-                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">
-                        Visual Cue:
-                      </span>
-                      <p className="text-zinc-200 mt-0.5 leading-relaxed">{scene.visualPrompt}</p>
-                    </div>
+                  {/* 1-Click Production Action Buttons */}
+                  <div className="pt-3 border-t border-zinc-800/80 flex flex-wrap items-center gap-1.5 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTtsText(scene.voiceoverText);
+                        setActiveTab('tts');
+                      }}
+                      className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                      title="បញ្ជូន Voiceover ទៅបម្លែងជាសំឡេងនិយាយ"
+                    >
+                      <Volume2 className="w-3 h-3 text-emerald-400" />
+                      <span>🎙️ យកសំឡេង</span>
+                    </button>
 
-                    <div>
-                      <span className="text-[10px] font-bold text-amber-400/90 uppercase tracking-wider block">
-                        Camera Motion:
-                      </span>
-                      <p className="text-zinc-300 mt-0.5 font-medium">{scene.cameraMovement}</p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setImagePrompt(`${scene.visualPrompt}, ${scene.cameraMovement}`);
+                        setActiveTab('image');
+                      }}
+                      className="px-2.5 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-[11px] font-semibold transition flex items-center gap-1 cursor-pointer"
+                      title="បញ្ជូន Visual Prompt ទៅបង្កើតរូបភាព AI"
+                    >
+                      <ImageIcon className="w-3 h-3 text-amber-400" />
+                      <span>🖼️ យករូបភាព</span>
+                    </button>
 
-                    <div>
-                      <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider block">
-                        Voiceover (សំឡេងនិយាយ):
-                      </span>
-                      <p className="text-emerald-300 mt-0.5 italic">"{scene.voiceoverText}"</p>
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-wider block">
-                        Sound FX:
-                      </span>
-                      <p className="text-indigo-300 mt-0.5 font-mono text-[11px]">{scene.soundEffect}</p>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        copyToClipboard(
+                          `${scene.visualPrompt}, camera motion: ${scene.cameraMovement}, ultra realistic, 8k resolution, cinematic lighting`
+                        );
+                        setCopiedSceneId(scene.sceneNumber);
+                        setTimeout(() => setCopiedSceneId(null), 2000);
+                      }}
+                      className="px-2 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 border border-zinc-700 rounded-lg text-[11px] transition flex items-center gap-1 cursor-pointer ml-auto"
+                      title="ចម្លង Prompt សម្រាប់ Runway / Kling / CapCut"
+                    >
+                      {copiedSceneId === scene.sceneNumber ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="text-emerald-400 text-[10px]">បាន Copy</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-zinc-400" />
+                          <span className="text-[10px]">Prompt AI Video</span>
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1208,36 +1376,103 @@ export const SuperIntelligentView: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-semibold text-zinc-300 block mb-1.5">
-                  Gemini API Key (ផ្ទាល់ខ្លួន)៖
+                  Gemini API Key (ផ្ទាល់ខ្លួន ឬ Pro Tier)៖
                 </label>
-                <div className="relative">
-                  <input
-                    type="password"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="AIzaSy..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
-                  />
-                  {apiKeyInput && (
-                    <button
-                      type="button"
-                      onClick={() => setApiKeyInput('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-300"
-                    >
-                      លុប
-                    </button>
-                  )}
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type="password"
+                      value={apiKeyInput}
+                      onChange={(e) => {
+                        setApiKeyInput(e.target.value);
+                        setTestResult(null);
+                      }}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
+                    />
+                    {apiKeyInput && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setApiKeyInput('');
+                          setTestResult(null);
+                        }}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                      >
+                        លុប
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTestKey}
+                    disabled={isTestingKey || !apiKeyInput.trim()}
+                    className="px-3.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-amber-300 border border-amber-500/30 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    {isTestingKey ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>កំពុងតេស្ត...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        <span>តេស្ត Key</span>
+                      </>
+                    )}
+                  </button>
                 </div>
                 <p className="text-[11px] text-zinc-500 mt-1">
-                  API Key នឹងត្រូវរក្សាទុកដោយសុវត្ថិភាពក្នុង Browser របស់អ្នក (LocalStorage)។
+                  Key នឹងត្រូវរក្សាទុកក្នុង Browser របស់អ្នក (LocalStorage) ដោយសុវត្ថិភាព។
                 </p>
               </div>
 
-              {/* Instructions on getting free Gemini Key */}
+              {/* Test Result Card */}
+              {testResult && (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 transition-all ${
+                    testResult.ok
+                      ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                      : 'bg-red-950/40 border-red-500/50 text-red-300'
+                  }`}
+                >
+                  {testResult.ok ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  )}
+                  <div>
+                    <p className="font-bold text-xs">
+                      {testResult.ok ? '✅ ដំណើរការជោគជ័យ ១០០%!' : '❌ ការតភ្ជាប់បរាជ័យ'}
+                    </p>
+                    <p className="text-[11px] opacity-90 mt-0.5">{testResult.message}</p>
+                    {testResult.ok && (
+                      <p className="text-[10px] text-emerald-400 font-mono mt-1">
+                        Model: gemini-2.5-flash | Connected & Verified
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Pro Tier (Tier 3) Explainer */}
+              <div className="bg-emerald-950/20 border border-emerald-500/30 rounded-xl p-3.5 space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-emerald-300">
+                  <Zap className="w-4 h-4 text-emerald-400" />
+                  <span>គណនី Pro (Tier 3) របស់បង ទទួលបានអត្ថប្រយោជន៍អ្វីខ្លះ?</span>
+                </div>
+                <ul className="text-[11px] text-zinc-300 space-y-1 list-disc list-inside leading-relaxed">
+                  <li><b className="text-emerald-400">Rate Limit ខ្ពស់បំផុត៖</b> អាច Request បានរហូតដល់ 1,000+ RPM (មិនជាប់ Limit 15 RPM ដូចគណនី Free ឡើយ)។</li>
+                  <li><b className="text-emerald-400">Enterprise Privacy៖</b> Google មិនយក Prompt ឬទិន្នន័យរបស់អ្នកទៅ Train AI ឡើយ។</li>
+                  <li><b className="text-emerald-400">ល្បឿនលឿនបំផុត៖</b> ដំណើរការលើ Google Global High-Speed Infrastructure។</li>
+                </ul>
+              </div>
+
+              {/* Instructions on getting Gemini Key */}
               <div className="bg-zinc-950/70 border border-zinc-800 rounded-xl p-3.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold text-amber-400">
-                    💡 របៀបយក API Key ឥតគិតថ្លៃ (Free 100%)៖
+                    💡 របៀបយក API Key ពី Google AI Studio៖
                   </span>
                   <a
                     href="https://aistudio.google.com/app/apikey"
@@ -1250,9 +1485,9 @@ export const SuperIntelligentView: React.FC = () => {
                   </a>
                 </div>
                 <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside leading-relaxed">
-                  <li>ចូលទៅកាន់ <b className="text-zinc-300">Google AI Studio</b> (aistudio.google.com/app/apikey)</li>
-                  <li>ចុចប៊ូតុង <b className="text-zinc-300">&quot;Create API Key&quot;</b></li>
-                  <li>Copy Key នោះមកបិទភ្ជាប់ (Paste) ក្នុងប្រអប់ខាងលើ រួចចុច Save</li>
+                  <li>ចូលទៅកាន់ <b className="text-zinc-300">Google AI Studio</b> (aistudio.google.com)</li>
+                  <li>ចុចលើ <b className="text-zinc-300">&quot;API Keys&quot;</b> ឬចូលគម្រោងដែលបងចង់ប្រើ</li>
+                  <li>Copy Key នោះមក Paste ក្នុងប្រអប់ខាងលើ រួចចុច <b className="text-amber-400">&quot;តេស្ត Key&quot;</b> និង <b className="text-amber-400">&quot;រក្សាទុក&quot;</b></li>
                 </ol>
               </div>
 
@@ -1286,7 +1521,7 @@ export const SuperIntelligentView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsKeyModalOpen(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition"
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer"
                 >
                   បិទ
                 </button>

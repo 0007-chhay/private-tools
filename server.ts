@@ -3,6 +3,7 @@ import express from 'express';
 import type { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import JSZip from 'jszip';
 import { GoogleGenAI } from '@google/genai';
@@ -11,6 +12,8 @@ import {
   ListBucketsCommand,
   ListObjectsV2Command,
   GetObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +30,8 @@ const ai = new GoogleGenAI({
   },
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // Enable CORS for all API routes
 app.use('/api', (req, res, next) => {
@@ -46,6 +50,50 @@ const CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes
 
 // Global cookie store for Wayback Machine session stickiness
 let sessionCookies = new Map<string, string>();
+
+// ---------------------------------------------------------------------------
+// Proxy safety: only Wayback Machine hosts may be fetched through /api/proxy.
+// Without this, anyone could use the server as an open proxy, or reach
+// internal addresses such as cloud metadata (169.254.169.254) or localhost.
+// ---------------------------------------------------------------------------
+const PROXY_ALLOWED_HOSTS = new Set(['web.archive.org', 'archive.org']);
+const PROXY_MAX_REDIRECTS = 5;
+const PROXY_MAX_BYTES = 50 * 1024 * 1024; // 50 MB per response
+const CACHE_MAX_TOTAL_BYTES = 150 * 1024 * 1024; // 150 MB across the cache
+const CACHE_MAX_ITEM_BYTES = 10 * 1024 * 1024; // do not cache single items > 10 MB
+
+function isAllowedProxyUrl(raw: string): URL | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  if (u.username || u.password) return null;
+  if (u.port && u.port !== '80' && u.port !== '443') return null;
+  if (!PROXY_ALLOWED_HOSTS.has(u.hostname.toLowerCase())) return null;
+  u.protocol = 'https:'; // always talk to the archive over HTTPS
+  u.port = '';
+  return u;
+}
+
+let cacheTotalBytes = 0;
+function cacheSet(key: string, entry: { buffer: Buffer; contentType: string; cachedAt: number }) {
+  if (entry.buffer.length > CACHE_MAX_ITEM_BYTES) return;
+  const prev = assetCache.get(key);
+  if (prev) {
+    cacheTotalBytes -= prev.buffer.length;
+    assetCache.delete(key);
+  }
+  while (cacheTotalBytes + entry.buffer.length > CACHE_MAX_TOTAL_BYTES && assetCache.size > 0) {
+    const oldestKey = assetCache.keys().next().value as string;
+    cacheTotalBytes -= assetCache.get(oldestKey)!.buffer.length;
+    assetCache.delete(oldestKey);
+  }
+  assetCache.set(key, entry);
+  cacheTotalBytes += entry.buffer.length;
+}
 
 async function fetchWithRetry(url: string, retries = 3, delayMs = 1200): Promise<globalThis.Response> {
   const userAgents = [
@@ -73,10 +121,17 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1200): Promise
         headers['Cookie'] = cookieStr;
       }
 
-      const response = await fetch(currentUrl, {
-        headers,
-        redirect: 'follow',
-      });
+      // Follow redirects manually so every hop is re-checked against the allowlist
+      let response = await fetch(currentUrl, { headers, redirect: 'manual' });
+      for (let hop = 0; response.status >= 300 && response.status < 400; hop++) {
+        const location = response.headers.get('location');
+        if (!location) break;
+        if (hop >= PROXY_MAX_REDIRECTS) throw new Error('Too many redirects');
+        const next = isAllowedProxyUrl(new URL(location, currentUrl).toString());
+        if (!next) throw new Error('Redirect to a non-archive host was blocked');
+        currentUrl = next.toString();
+        response = await fetch(currentUrl, { headers, redirect: 'manual' });
+      }
 
       // Save any set-cookies
       const rawCookies = typeof response.headers.getSetCookie === 'function'
@@ -112,9 +167,19 @@ async function fetchWithRetry(url: string, retries = 3, delayMs = 1200): Promise
 app.get('/api/proxy', async (req: Request, res: Response) => {
   const targetUrl = req.query.url as string;
 
-  if (!targetUrl) {
+  if (!targetUrl || typeof targetUrl !== 'string') {
     return res.status(400).json({ error: 'Missing required query parameter "url"' });
   }
+
+  const allowed = isAllowedProxyUrl(targetUrl);
+  if (!allowed) {
+    return res.status(403).json({ error: 'Only web.archive.org URLs can be fetched through this proxy' });
+  }
+
+  // Archived pages are untrusted. Serve them sandboxed so any script inside
+  // cannot run on this app's origin (where R2 / Gemini keys live in localStorage).
+  res.setHeader('Content-Security-Policy', 'sandbox');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
   // Check cache first
   const cached = assetCache.get(targetUrl);
@@ -126,12 +191,7 @@ app.get('/api/proxy', async (req: Request, res: Response) => {
   }
 
   try {
-    const parsedUrl = new URL(targetUrl);
-    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      return res.status(400).json({ error: 'Invalid URL protocol' });
-    }
-
-    const response = await fetchWithRetry(targetUrl, 3, 1000);
+    const response = await fetchWithRetry(allowed.toString(), 3, 1000);
 
     if (!response.ok) {
       return res.status(response.status).json({
@@ -140,20 +200,34 @@ app.get('/api/proxy', async (req: Request, res: Response) => {
       });
     }
 
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > PROXY_MAX_BYTES) {
+      return res.status(413).json({ error: 'File is too large to proxy (limit 50 MB)' });
+    }
+
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
+
+    // Read the body with a hard size cap (content-length can be missing or wrong)
+    const chunks: Buffer[] = [];
+    let received = 0;
+    if (response.body) {
+      const reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        if (received > PROXY_MAX_BYTES) {
+          await reader.cancel();
+          return res.status(413).json({ error: 'File is too large to proxy (limit 50 MB)' });
+        }
+        chunks.push(Buffer.from(value));
+      }
+    }
+    const buffer = Buffer.concat(chunks);
+
     res.setHeader('Content-Type', contentType);
     res.setHeader('Cache-Control', 'public, max-age=3600');
-
-    // Transfer response as ArrayBuffer
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    // Save in cache (limit cache size to ~100MB by pruning oldest if needed)
-    if (assetCache.size > 200) {
-      const firstKey = assetCache.keys().next().value;
-      if (firstKey) assetCache.delete(firstKey);
-    }
-    assetCache.set(targetUrl, { buffer, contentType, cachedAt: Date.now() });
+    cacheSet(targetUrl, { buffer, contentType, cachedAt: Date.now() });
 
     res.setHeader('Content-Length', buffer.length);
     res.send(buffer);
@@ -325,155 +399,85 @@ app.all('/api/r2/download-object', async (req: Request, res: Response) => {
   }
 });
 
-// Cloudflare Credential Testing Endpoint
-app.post('/api/cf/test-auth', async (req: Request, res: Response) => {
-  const { apiToken, authEmail, authKey } = req.body || {};
+// R2 Upload Object Endpoint
+app.post('/api/r2/upload-object', async (req: Request, res: Response) => {
+  const {
+    accessKeyId,
+    secretAccessKey,
+    endpoint,
+    bucket,
+    key,
+    fileBase64,
+    contentType = 'application/octet-stream',
+  } = req.body || {};
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (apiToken?.trim()) {
-    headers['Authorization'] = `Bearer ${apiToken.trim()}`;
-  } else if (authEmail?.trim() && authKey?.trim()) {
-    headers['X-Auth-Email'] = authEmail.trim();
-    headers['X-Auth-Key'] = authKey.trim();
-  } else {
+  if (!accessKeyId || !secretAccessKey || !endpoint || !bucket || !key || !fileBase64) {
     return res.status(400).json({
-      success: false,
-      error: 'Please provide either an API Token OR Global API Key with Cloudflare Email.',
+      error: 'Missing required parameters (accessKeyId, secretAccessKey, endpoint, bucket, key, fileBase64)',
     });
   }
 
   try {
-    const cfRes = await fetch('https://api.cloudflare.com/client/v4/user', {
-      headers,
-    });
-    const data = await cfRes.json();
+    const client = getR2Client(accessKeyId, secretAccessKey, endpoint);
+    // Strip metadata header if present (e.g. "data:image/png;base64,....")
+    const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const buffer = Buffer.from(base64Data, 'base64');
 
-    if (data.success && data.result) {
-      return res.json({
-        success: true,
-        user: {
-          id: data.result.id,
-          email: data.result.email,
-          username: data.result.username,
-        },
-      });
-    } else {
-      return res.status(401).json({
-        success: false,
-        error: data.errors?.[0]?.message || 'Cloudflare authentication failed',
-        details: data.errors,
-      });
-    }
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      ContentLength: buffer.length,
+    });
+
+    await client.send(command);
+
+    res.json({
+      success: true,
+      bucket,
+      key,
+      size: buffer.length,
+      contentType,
+      message: `File uploaded successfully to ${bucket}/${key}`,
+    });
   } catch (err: any) {
-    return res.status(502).json({
-      success: false,
-      error: 'Failed to contact Cloudflare API',
+    console.error('R2 upload object error:', err?.message || err);
+    res.status(502).json({
+      error: 'Failed to upload object to Cloudflare R2',
       details: err?.message || String(err),
     });
   }
 });
 
-// Cloudflare Account Creation Endpoint
-app.post('/api/cf/create-account', async (req: Request, res: Response) => {
-  const { email, password, apiToken, authEmail, authKey, parentAccountId } = req.body || {};
+// R2 Delete Object Endpoint
+app.post('/api/r2/delete-object', async (req: Request, res: Response) => {
+  const { accessKeyId, secretAccessKey, endpoint, bucket, key } = req.body || {};
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Missing email or password' });
-  }
-
-  const hasToken = Boolean(apiToken?.trim());
-  const hasGlobalKey = Boolean(authEmail?.trim() && authKey?.trim());
-
-  if (!hasToken && !hasGlobalKey) {
+  if (!accessKeyId || !secretAccessKey || !endpoint || !bucket || !key) {
     return res.status(400).json({
-      success: false,
-      error:
-        'Cloudflare API Token or Global API Key is required for automated backend API creation. For free direct account registration without an API token, use the 1-Click Fast Register or Download Automation Script.',
-      requiresToken: true,
+      error: 'Missing required parameters (accessKeyId, secretAccessKey, endpoint, bucket, key)',
     });
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (hasToken) {
-    headers['Authorization'] = `Bearer ${apiToken.trim()}`;
-  } else {
-    headers['X-Auth-Email'] = authEmail.trim();
-    headers['X-Auth-Key'] = authKey.trim();
-  }
-
   try {
-    if (parentAccountId) {
-      // Invite member to existing account
-      const cfRes = await fetch(
-        `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(parentAccountId.trim())}/members`,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            email: email.trim(),
-            roles: [],
-            status: 'pending',
-          }),
-        }
-      );
+    const client = getR2Client(accessKeyId, secretAccessKey, endpoint);
+    const command = new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: key,
+    });
 
-      const data = await cfRes.json();
-      if (data.success) {
-        return res.json({
-          success: true,
-          method: 'member_invitation',
-          email,
-          memberId: data.result?.id,
-          message: 'Invited to Cloudflare account successfully',
-        });
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: data.errors?.[0]?.message || 'Failed to invite member via API',
-        });
-      }
-    } else {
-      // Create account via Cloudflare Accounts API
-      headers['Idempotency-Key'] = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-      const cfRes = await fetch('https://api.cloudflare.com/client/v4/accounts', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          name: email.trim(),
-          type: 'standard',
-        }),
-      });
-
-      const data = await cfRes.json();
-      if (data.success) {
-        return res.json({
-          success: true,
-          method: 'account_provision',
-          email,
-          accountId: data.result?.id,
-          accountName: data.result?.name,
-          message: 'Cloudflare account created successfully via API',
-        });
-      } else {
-        const errorMsg = data.errors?.[0]?.message || 'Failed to create Cloudflare account via API';
-        return res.status(400).json({
-          success: false,
-          error: errorMsg,
-          details: data.errors,
-        });
-      }
-    }
+    await client.send(command);
+    res.json({
+      success: true,
+      bucket,
+      key,
+      message: `Object ${key} deleted successfully`,
+    });
   } catch (err: any) {
-    return res.status(502).json({
-      success: false,
-      error: 'Cloudflare API request failed',
+    console.error('R2 delete object error:', err?.message || err);
+    res.status(502).json({
+      error: 'Failed to delete object from Cloudflare R2',
       details: err?.message || String(err),
     });
   }
@@ -983,9 +987,49 @@ app.post('/api/telegram/send-message', async (req: Request, res: Response) => {
   });
 });
 
-// Secret Admin Source Code Download endpoint
-// Hidden from public UI so team members cannot discover or download it
-app.get('/api/admin/download-source', async (_req: Request, res: Response) => {
+// Admin source code download.
+// Disabled unless ADMIN_DOWNLOAD_TOKEN is set (at least 24 characters), and
+// requires header:  Authorization: Bearer <ADMIN_DOWNLOAD_TOKEN>
+// Example:
+//   curl -H "Authorization: Bearer $ADMIN_DOWNLOAD_TOKEN" -o source.zip https://your-app/api/admin/download-source
+function isAdminAuthorized(req: Request): boolean {
+  const expected = process.env.ADMIN_DOWNLOAD_TOKEN || '';
+  if (expected.length < 24) return false;
+  const header = req.headers.authorization || '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const a = crypto.createHash('sha256').update(provided).digest();
+  const b = crypto.createHash('sha256').update(expected).digest();
+  return provided.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
+// Files that must never be packed into the source zip
+function isSecretOrIgnored(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === '.env.example') return false;
+  return (
+    lower === 'node_modules' ||
+    lower === '.git' ||
+    lower === 'dist' ||
+    lower === '.vercel' ||
+    lower === '.ds_store' ||
+    lower.startsWith('.env') ||
+    lower.startsWith('.cache') ||
+    lower.endsWith('.zip') ||
+    lower.endsWith('.pem') ||
+    lower.endsWith('.key') ||
+    lower.endsWith('.p12') ||
+    lower.endsWith('.log') ||
+    lower === 'rclone.conf' ||
+    lower.startsWith('id_rsa') ||
+    lower.startsWith('id_ed25519')
+  );
+}
+
+app.get('/api/admin/download-source', async (req: Request, res: Response) => {
+  if (!isAdminAuthorized(req)) {
+    // 404 so the endpoint does not reveal that it exists
+    return res.status(404).json({ error: 'Not found' });
+  }
   try {
     const zip = new JSZip();
 
@@ -996,15 +1040,8 @@ app.get('/api/admin/download-source', async (_req: Request, res: Response) => {
         const fullPath = path.join(dirPath, entry.name);
         const relativePath = path.relative(rootDir, fullPath);
 
-        // Ignore build, temp, git, and zip files
-        if (
-          entry.name === 'node_modules' ||
-          entry.name === '.git' ||
-          entry.name === 'dist' ||
-          entry.name.endsWith('.zip') ||
-          entry.name.startsWith('.cache') ||
-          entry.name === '.DS_Store'
-        ) {
+        // Skip secrets (.env, keys), build output, git data, and zips
+        if (isSecretOrIgnored(entry.name) || entry.isSymbolicLink()) {
           continue;
         }
 
@@ -1077,7 +1114,7 @@ pause
     return res.send(zipBuffer);
   } catch (err: any) {
     console.error('Failed to create source code zip:', err);
-    return res.status(500).json({ error: 'Failed to generate zip', details: err?.message });
+    return res.status(500).json({ error: 'Failed to generate zip' });
   }
 });
 
@@ -1450,7 +1487,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
       'Super-Intelligent AI Studio',
       'Wayback Machine Cloner',
       'Rclone R2 Backup',
-      'Cloudflare Account Creator',
+      'Bulk Password Generator',
       'Trend Analytics',
       'Telegram Auto-Responder',
     ],

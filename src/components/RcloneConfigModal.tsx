@@ -26,8 +26,9 @@ secret_access_key = ${credentials.secretAccessKey || '<YOUR_SECRET_ACCESS_KEY>'}
 endpoint = ${credentials.endpoint || 'https://<ACCOUNT_ID>.r2.cloudflarestorage.com'}
 acl = private`;
 
-  const syncCommand = `rclone sync cloudflare-r2:${credentials.bucket || '<bucket_name>'} ./r2-backup --progress`;
   const copyCommand = `rclone copy cloudflare-r2:${credentials.bucket || '<bucket_name>'} ./r2-backup --progress`;
+  const uploadCommand = `rclone copy ./my-local-folder cloudflare-r2:${credentials.bucket || '<bucket_name>'}/ --progress`;
+  const dryRunCommand = `rclone copy ./my-local-folder cloudflare-r2:${credentials.bucket || '<bucket_name>'}/ --dry-run`;
   const listCommand = `rclone ls cloudflare-r2:${credentials.bucket || '<bucket_name>'}`;
 
   const handleCopyConf = () => {
@@ -128,12 +129,22 @@ acl = private`;
             <span className="font-mono text-zinc-300 font-semibold block">
               Quick Rclone Terminal Commands
             </span>
+            <p className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-2">
+              These commands use <code className="font-mono">rclone copy</code>, which only adds or updates files.
+              Avoid <code className="font-mono">rclone sync</code> unless you mean it: it deletes files at the
+              destination that are not in the source.
+            </p>
 
             {[
               {
-                id: 'sync',
-                label: 'Sync Entire R2 Bucket to Local Directory (Exact Mirror):',
-                cmd: syncCommand,
+                id: 'upload',
+                label: 'Upload / Copy Local Files to Cloudflare R2 Bucket:',
+                cmd: uploadCommand,
+              },
+              {
+                id: 'dry_run',
+                label: 'Preview an upload without changing anything (dry run):',
+                cmd: dryRunCommand,
               },
               {
                 id: 'copy',

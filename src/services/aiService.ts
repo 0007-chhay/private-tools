@@ -426,3 +426,38 @@ ${isKhmer ? 'ចុច Save វីដេអូនេះទុក និង Follo
 --------------------------------------------------
 ${isKhmer ? 'ខ្លឹមសារលម្អិតសម្រាប់ប្រធានបទ "' + idea + '"៖\n- ចំណុចសំខាន់ៗដែលត្រូវផ្តោត\n- គន្លឹះនៃការអនុវត្តជាក់ស្តែង\n- ការទាក់ទាញចំណាប់អារម្មណ៍របស់អ្នកទស្សនា' : 'Comprehensive guide for: "' + idea + '" with actionable steps, audience retention hooks, and high-converting copy.'}`;
 }
+
+// 6. Direct Key Connectivity Test
+export async function testGeminiApiKey(keyToTest?: string): Promise<{ ok: boolean; message: string; model?: string }> {
+  const key = (keyToTest || getStoredApiKey()).trim();
+  if (!key) {
+    return { ok: false, message: 'មិនទាន់បានបញ្ចូល API Key នៅឡើយទេ។' };
+  }
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: 'Respond with exactly: OK' }] }],
+        }),
+      }
+    );
+
+    const json = await res.json();
+    if (!res.ok || json.error) {
+      const errDetail = json.error?.message || res.statusText || 'API key invalid';
+      return { ok: false, message: `Key មិនត្រឹមត្រូវ ឬមានបញ្ហា៖ ${errDetail}` };
+    }
+
+    return {
+      ok: true,
+      message: 'API Key ដំណើរការល្អ ១០០%! បានភ្ជាប់ទៅកាន់ Google Gemini API ដោយជោគជ័យ។',
+      model: 'gemini-2.5-flash',
+    };
+  } catch (err: any) {
+    return { ok: false, message: `មិនអាចភ្ជាប់ទៅកាន់ Google API បានទេ៖ ${err.message || 'Network error'}` };
+  }
+}

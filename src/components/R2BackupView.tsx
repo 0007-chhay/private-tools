@@ -20,6 +20,14 @@ import {
   ArrowRight,
   Layers,
   Sparkles,
+  UploadCloud,
+  Upload,
+  Trash2,
+  Plus,
+  FileUp,
+  Check,
+  Loader2,
+  X,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { R2Credentials, R2ObjectItem, R2BackupProgress } from '../types/r2';
@@ -74,6 +82,20 @@ export const R2BackupView: React.FC = () => {
 
   // Rclone config modal
   const [isRcloneModalOpen, setIsRcloneModalOpen] = useState<boolean>(false);
+
+  // Upload State
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState<boolean>(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [uploadDestinationPrefix, setUploadDestinationPrefix] = useState<string>('');
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadProgressPercent, setUploadProgressPercent] = useState<number>(0);
+  const [currentUploadingFile, setCurrentUploadingFile] = useState<string>('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+
+  // Delete State
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   // Save credentials to localStorage if toggle enabled
   useEffect(() => {
@@ -226,6 +248,173 @@ export const R2BackupView: React.FC = () => {
     parts.pop();
     const newPrefix = parts.length > 0 ? `${parts.join('/')}/` : '';
     loadObjects(credentials.bucket, newPrefix);
+  };
+
+  // Open Upload Modal
+  const handleOpenUploadModal = () => {
+    if (!credentials.bucket) {
+      setErrorMessage('Please connect and select a bucket first before uploading.');
+      return;
+    }
+    setUploadDestinationPrefix(currentPrefix);
+    setSelectedFiles([]);
+    setUploadError(null);
+    setUploadSuccess(null);
+    setUploadProgressPercent(0);
+    setIsUploadModalOpen(true);
+  };
+
+  // File selection
+  const handleFileSelection = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const filesArray = Array.from(e.target.files);
+      setSelectedFiles((prev) => [...prev, ...filesArray]);
+      setUploadError(null);
+    }
+  };
+
+  // Drag and drop files
+  const handleDropFiles = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const filesArray = Array.from(e.dataTransfer.files);
+      setSelectedFiles((prev) => [...prev, ...filesArray]);
+      setUploadError(null);
+    }
+  };
+
+  // Remove file from staged upload list
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Upload files to R2 via /api/r2/upload-object
+  const handleUploadFilesToR2 = async () => {
+    if (selectedFiles.length === 0) {
+      setUploadError('Please select at least one file to upload.');
+      return;
+    }
+    if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.endpoint || !credentials.bucket) {
+      setUploadError('Please connect and select a bucket first.');
+      return;
+    }
+
+    setIsUploading(true);
+    setUploadError(null);
+    setUploadSuccess(null);
+    setUploadProgressPercent(0);
+
+    let successCount = 0;
+    const total = selectedFiles.length;
+
+    for (let i = 0; i < total; i++) {
+      const file = selectedFiles[i];
+      setCurrentUploadingFile(file.name);
+      setUploadProgressPercent(Math.round((i / total) * 100));
+
+      try {
+        addLog(`Initiating upload: "${file.name}" (${formatBytes(file.size)}) to bucket "${credentials.bucket}"...`);
+
+        // Convert file to base64
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Failed to read file from disk'));
+          reader.readAsDataURL(file);
+        });
+
+        // Compute destination key: prefix + file.name
+        let cleanPrefix = uploadDestinationPrefix.trim();
+        if (cleanPrefix && !cleanPrefix.endsWith('/')) {
+          cleanPrefix += '/';
+        }
+        if (cleanPrefix.startsWith('/')) {
+          cleanPrefix = cleanPrefix.substring(1);
+        }
+        const targetKey = `${cleanPrefix}${file.name}`;
+
+        const res = await fetch('/api/r2/upload-object', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accessKeyId: credentials.accessKeyId,
+            secretAccessKey: credentials.secretAccessKey,
+            endpoint: credentials.endpoint,
+            bucket: credentials.bucket,
+            key: targetKey,
+            fileBase64: base64Data,
+            contentType: file.type || 'application/octet-stream',
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.details || data.error || 'Failed to upload to R2');
+        }
+
+        successCount++;
+        addLog(`✓ Successfully uploaded "${targetKey}" (${formatBytes(file.size)}) to R2`);
+      } catch (err: any) {
+        console.error('File upload error:', err);
+        addLog(`✗ Upload failed for "${file.name}": ${err.message || err}`);
+        setUploadError(`Failed to upload "${file.name}": ${err.message || err}`);
+        setIsUploading(false);
+        return;
+      }
+    }
+
+    setUploadProgressPercent(100);
+    setIsUploading(false);
+    setUploadSuccess(`Successfully uploaded ${successCount} file(s) to Cloudflare R2!`);
+    addLog(`✓ All ${successCount} file(s) uploaded successfully!`);
+    setSelectedFiles([]);
+
+    setTimeout(() => {
+      setIsUploadModalOpen(false);
+      setUploadSuccess(null);
+    }, 1200);
+
+    // Refresh file list
+    loadObjects(credentials.bucket, currentPrefix);
+  };
+
+  // Delete object from R2
+  const handleDeleteObject = async (key: string) => {
+    if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.endpoint || !credentials.bucket) {
+      return;
+    }
+
+    setIsDeleting(true);
+    addLog(`Deleting object "${key}" from R2...`);
+
+    try {
+      const res = await fetch('/api/r2/delete-object', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          endpoint: credentials.endpoint,
+          bucket: credentials.bucket,
+          key,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.details || data.error || 'Delete failed');
+      }
+
+      addLog(`✓ Deleted "${key}" from Cloudflare R2`);
+      setSuccessMessage(`Successfully deleted ${key}`);
+      setDeleteConfirmKey(null);
+      loadObjects(credentials.bucket, currentPrefix);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to delete object');
+      addLog(`✗ Delete error: ${err.message || err}`);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Toggle select file
@@ -663,6 +852,17 @@ export const R2BackupView: React.FC = () => {
 
             <button
               type="button"
+              onClick={handleOpenUploadModal}
+              disabled={!credentials.bucket}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-zinc-950 font-semibold text-xs transition disabled:opacity-40 cursor-pointer shadow-sm"
+              title="Upload files to this Cloudflare R2 bucket"
+            >
+              <UploadCloud className="w-3.5 h-3.5" />
+              <span>Upload to R2</span>
+            </button>
+
+            <button
+              type="button"
               onClick={handleBackupToZip}
               disabled={
                 backupProgress.status === 'downloading' ||
@@ -684,13 +884,23 @@ export const R2BackupView: React.FC = () => {
         {/* Files Table */}
         <div className="max-h-[420px] overflow-y-auto">
           {objects.length === 0 ? (
-            <div className="p-8 text-center text-zinc-600 text-xs space-y-2">
+            <div className="p-8 text-center text-zinc-600 text-xs space-y-3">
               <FolderTree className="w-8 h-8 mx-auto text-zinc-700" />
               <p>
                 {credentials.bucket
-                  ? 'No objects found in this bucket/prefix. Click "Connect & List" or upload files.'
+                  ? 'No objects found in this bucket/prefix. Click "Connect & List" or upload your first file.'
                   : 'Enter your credentials above and click "Connect & List" to view and backup files.'}
               </p>
+              {credentials.bucket && (
+                <button
+                  type="button"
+                  onClick={handleOpenUploadModal}
+                  className="px-3.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition shadow-sm"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Upload Files to R2</span>
+                </button>
+              )}
             </div>
           ) : (
             <table className="w-full text-left text-xs border-collapse font-mono">
@@ -761,22 +971,32 @@ export const R2BackupView: React.FC = () => {
                     </td>
                     <td className="py-2 px-3 text-right">
                       {!item.isFolder && (
-                        <a
-                          href={`/api/r2/download-object?accessKeyId=${encodeURIComponent(
-                            credentials.accessKeyId
-                          )}&secretAccessKey=${encodeURIComponent(
-                            credentials.secretAccessKey
-                          )}&endpoint=${encodeURIComponent(
-                            credentials.endpoint
-                          )}&bucket=${encodeURIComponent(
-                            credentials.bucket
-                          )}&key=${encodeURIComponent(item.key)}`}
-                          download
-                          className="text-zinc-500 hover:text-amber-400 p-1 rounded inline-block transition"
-                          title="Download single file"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <a
+                            href={`/api/r2/download-object?accessKeyId=${encodeURIComponent(
+                              credentials.accessKeyId
+                            )}&secretAccessKey=${encodeURIComponent(
+                              credentials.secretAccessKey
+                            )}&endpoint=${encodeURIComponent(
+                              credentials.endpoint
+                            )}&bucket=${encodeURIComponent(
+                              credentials.bucket
+                            )}&key=${encodeURIComponent(item.key)}`}
+                            download
+                            className="text-zinc-500 hover:text-amber-400 p-1 rounded inline-block transition"
+                            title="Download single file"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => setDeleteConfirmKey(item.key)}
+                            className="text-zinc-500 hover:text-rose-400 p-1 rounded inline-block transition cursor-pointer"
+                            title="Delete file from R2"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -819,6 +1039,246 @@ export const R2BackupView: React.FC = () => {
         onClose={() => setIsRcloneModalOpen(false)}
         credentials={credentials}
       />
+
+      {/* Upload to Cloudflare R2 Modal */}
+      {isUploadModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-xl bg-zinc-900 border border-amber-500/30 rounded-2xl p-6 shadow-2xl text-left space-y-4">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                  <UploadCloud className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Upload Files to Cloudflare R2</h3>
+                  <p className="text-xs text-zinc-400 font-mono">
+                    Bucket: <span className="text-amber-400">{credentials.bucket}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !isUploading && setIsUploadModalOpen(false)}
+                disabled={isUploading}
+                className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition disabled:opacity-30 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Destination Path Input */}
+              <div>
+                <label className="text-zinc-300 font-mono font-medium block mb-1">
+                  Target Destination Prefix / Folder (Optional)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={uploadDestinationPrefix}
+                    onChange={(e) => setUploadDestinationPrefix(e.target.value)}
+                    placeholder="e.g. backups/ or leave empty for root"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono text-zinc-200 outline-none focus:border-amber-500"
+                  />
+                </div>
+                <span className="text-[10px] text-zinc-500 font-mono mt-0.5 block">
+                  Files will be uploaded to: s3://{credentials.bucket}/{uploadDestinationPrefix || '(root)/'}
+                </span>
+              </div>
+
+              {/* Drop Zone */}
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={handleDropFiles}
+                className="border-2 border-dashed border-zinc-700 hover:border-amber-500/60 bg-zinc-950/60 rounded-xl p-6 text-center cursor-pointer transition flex flex-col items-center justify-center space-y-2 group"
+                onClick={() => {
+                  const input = document.getElementById('r2-file-input') as HTMLInputElement;
+                  if (input) input.click();
+                }}
+              >
+                <input
+                  id="r2-file-input"
+                  type="file"
+                  multiple
+                  onChange={handleFileSelection}
+                  className="hidden"
+                />
+                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:scale-110 transition">
+                  <FileUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-zinc-200">
+                    Drag & Drop files here, or <span className="text-amber-400 underline">Browse Local Files</span>
+                  </p>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    Supports any file type (Images, Videos, SQL Dumps, ZIP, Documents, Code)
+                  </p>
+                </div>
+              </div>
+
+              {/* Selected Files List */}
+              {selectedFiles.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-zinc-400">
+                    <span className="font-semibold text-zinc-300">
+                      Selected Files ({selectedFiles.length})
+                    </span>
+                    <span className="font-mono text-[11px]">
+                      Total: {formatBytes(selectedFiles.reduce((acc, f) => acc + f.size, 0))}
+                    </span>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto space-y-1 bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+                    {selectedFiles.map((f, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between bg-zinc-900 px-2.5 py-1.5 rounded text-zinc-200 font-mono text-[11px]"
+                      >
+                        <div className="flex items-center gap-1.5 truncate max-w-[80%]">
+                          <FileText className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                          <span className="truncate">{f.name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-zinc-500 text-[10px]">{formatBytes(f.size)}</span>
+                          {!isUploading && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveFile(idx);
+                              }}
+                              className="text-zinc-500 hover:text-rose-400 transition cursor-pointer"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Upload Progress Bar */}
+              {isUploading && (
+                <div className="space-y-1.5 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                  <div className="flex items-center justify-between text-zinc-300">
+                    <span className="font-semibold flex items-center gap-1.5">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                      <span>Uploading: {currentUploadingFile}...</span>
+                    </span>
+                    <span className="font-mono text-amber-400 font-bold">{uploadProgressPercent}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-900 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 transition-all duration-200"
+                      style={{ width: `${uploadProgressPercent}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Error message */}
+              {uploadError && (
+                <div className="p-2.5 bg-rose-950/40 border border-rose-500/50 rounded-lg text-rose-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              {/* Success message */}
+              {uploadSuccess && (
+                <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/50 rounded-lg text-emerald-300 text-xs flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{uploadSuccess}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between pt-3 border-t border-zinc-800">
+              <span className="text-[11px] text-zinc-500 font-mono truncate max-w-[200px]">
+                {credentials.endpoint ? credentials.endpoint.replace('https://', '') : 'R2 Storage'}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isUploading}
+                  onClick={() => setIsUploadModalOpen(false)}
+                  className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded-lg text-xs font-semibold transition disabled:opacity-40 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUploading || selectedFiles.length === 0}
+                  onClick={handleUploadFilesToR2}
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 disabled:opacity-40 text-zinc-950 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>Upload {selectedFiles.length > 0 ? `(${selectedFiles.length}) Files` : ''}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="relative w-full max-w-md bg-zinc-900 border border-rose-500/40 rounded-2xl p-5 shadow-2xl text-left space-y-3">
+            <div className="flex items-center gap-2.5 text-rose-400">
+              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-white">Delete Object from R2?</h3>
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed font-mono bg-zinc-950 p-2.5 rounded border border-zinc-800 break-all">
+              {deleteConfirmKey}
+            </p>
+            <p className="text-[11px] text-zinc-400">
+              This action is permanent and cannot be undone on Cloudflare R2.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-800">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setDeleteConfirmKey(null)}
+                className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-750 text-zinc-300 rounded-lg text-xs font-medium transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => handleDeleteObject(deleteConfirmKey)}
+                className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Permanently</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

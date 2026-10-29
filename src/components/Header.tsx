@@ -5,7 +5,7 @@ import {
   SlidersHorizontal,
   ShieldCheck,
   Database,
-  UserPlus,
+  KeyRound,
   TrendingUp,
   BarChart3,
   Send,
@@ -18,7 +18,7 @@ export type ToolMode =
   | 'super_intelligent'
   | 'wayback'
   | 'rclone_r2'
-  | 'cf_accounts'
+  | 'password_gen'
   | 'trend_analytics'
   | 'telegram_auto_reply';
 
@@ -104,16 +104,16 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               type="button"
-              onClick={() => onSelectTool('cf_accounts')}
+              onClick={() => onSelectTool('password_gen')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                currentTool === 'cf_accounts'
+                currentTool === 'password_gen'
                   ? 'bg-amber-500 text-zinc-950 shadow'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
               }`}
             >
-              <UserPlus className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">CF Account Creator</span>
-              <span className="sm:hidden">CF Creator</span>
+              <KeyRound className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Password Generator</span>
+              <span className="sm:hidden">Passwords</span>
             </button>
 
             <button
@@ -181,13 +181,13 @@ export const Header: React.FC<HeaderProps> = ({
                   <span aria-hidden="true" className="text-zinc-600">·</span>
                   <span>rclone.conf</span>
                 </>
-              ) : currentTool === 'cf_accounts' ? (
+              ) : currentTool === 'password_gen' ? (
                 <>
-                  <span>Batch Registration</span>
+                  <span>Bulk Passwords</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span>100+ Email Accounts</span>
+                  <span>Crypto-Secure</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span>CSV Export</span>
+                  <span>TXT Export</span>
                 </>
               ) : currentTool === 'trend_analytics' ? (
                 <>
@@ -246,10 +246,10 @@ export const Header: React.FC<HeaderProps> = ({
               <Database className="w-3.5 h-3.5 text-purple-400" />
               <span>Cloudflare R2 Bucket Sync</span>
             </div>
-          ) : currentTool === 'cf_accounts' ? (
+          ) : currentTool === 'password_gen' ? (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">
-              <UserPlus className="w-3.5 h-3.5 text-amber-400" />
-              <span>Bulk Cloudflare Accounts</span>
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span>Email → Password List</span>
             </div>
           ) : currentTool === 'trend_analytics' ? (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Archive,
   Cloud,
-  UserPlus,
+  KeyRound,
   TrendingUp,
   Send,
   ArrowRight,
@@ -15,7 +15,7 @@ import { ToolMode } from './Header';
 export interface ToolItem {
   id: ToolMode;
   name: string;
-  category: 'Generative AI' | 'Web Archiving' | 'Cloud Storage' | 'Cloudflare' | 'Social Growth' | 'Automation';
+  category: 'Generative AI' | 'Web Archiving' | 'Cloud Storage' | 'Security' | 'Social Growth' | 'Automation';
   description: string;
   icon: React.ReactNode;
   tag: string;
@@ -58,14 +58,14 @@ export const TOOLS_LIST: ToolItem[] = [
     features: ['rclone.conf Generator', 'Live S3 Verification', 'Cloud Bucket Explorer'],
   },
   {
-    id: 'cf_accounts',
-    name: 'CF Account Creator & Domain Provisioner',
-    category: 'Cloudflare',
-    tag: 'Cloudflare',
-    icon: <UserPlus className="w-5 h-5" />,
+    id: 'password_gen',
+    name: 'Bulk Password Generator',
+    category: 'Security',
+    tag: 'Security',
+    icon: <KeyRound className="w-5 h-5" />,
     description:
-      'Batch create and manage 100+ Cloudflare accounts with custom wildcard domain mappings, generate global API tokens, and export full credentials to CSV/JSON format.',
-    features: ['100+ Batch Accounts', 'API Token Management', 'CSV / JSON Export'],
+      'Paste a list of emails and generate a strong, unique password for each one in your browser. Copy the list or download it as a .txt file.',
+    features: ['Up to 1,000 emails', 'Crypto-secure passwords', 'TXT download'],
   },
   {
     id: 'trend_analytics',
@@ -93,7 +93,7 @@ export const AllToolsGridView: React.FC<AllToolsGridViewProps> = ({ onSelectTool
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
-  const categories = ['All', 'Generative AI', 'Web Archiving', 'Cloud Storage', 'Cloudflare', 'Social Growth', 'Automation'];
+  const categories = ['All', 'Generative AI', 'Web Archiving', 'Cloud Storage', 'Security', 'Social Growth', 'Automation'];
 
   const filteredTools = TOOLS_LIST.filter((tool) => {
     const matchesCategory = selectedCategory === 'All' || tool.category === selectedCategory;

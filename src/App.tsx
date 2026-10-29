@@ -8,7 +8,7 @@ import { AssetsTable } from './components/AssetsTable';
 import { CleanedPreview } from './components/CleanedPreview';
 import { ConfigModal } from './components/ConfigModal';
 import { R2BackupView } from './components/R2BackupView';
-import { CFAccountCreatorView } from './components/CFAccountCreatorView';
+import { PasswordGeneratorView } from './components/PasswordGeneratorView';
 import { TrendAnalyticsView } from './components/TrendAnalyticsView';
 import { TelegramAutoReplyView } from './components/TelegramAutoReplyView';
 import { AllToolsGridView } from './components/AllToolsGridView';
@@ -203,9 +203,9 @@ export default function App() {
             ) : currentTool === 'trend_analytics' ? (
               /* Mode 4: Viral Trends, Hashtags & TikTok Analytics */
               <TrendAnalyticsView />
-            ) : currentTool === 'cf_accounts' ? (
-              /* Mode 3: Cloudflare 100+ Account Creator */
-              <CFAccountCreatorView />
+            ) : currentTool === 'password_gen' ? (
+              /* Mode 3: Bulk Password Generator */
+              <PasswordGeneratorView />
             ) : currentTool === 'rclone_r2' ? (
               /* Mode 2: Rclone & Cloudflare R2 Backup */
               <R2BackupView />
