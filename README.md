@@ -87,6 +87,32 @@ npm start
 
 ---
 
+## 🔒 Site Login (Vercel Hobby, free)
+
+The whole site (pages and `/api`) is protected by `middleware.ts` with a browser login prompt.
+
+In **Vercel → Settings → Environment Variables** add one variable, then **Redeploy**:
+
+| Key | Value |
+|---|---|
+| `SITE_USERS` | `krisna:long-password,yoga:another-password` |
+
+- One user is fine too: `krisna:long-password`
+- Passwords must not contain commas. No spaces around `:` or `,`.
+- If `SITE_USERS` (or `SITE_USERNAME` + `SITE_PASSWORD`) is not set on Vercel, the site stays locked.
+- Locally (`npm run dev`) login is off unless you set the same variables in `.env`.
+- To log out of a Basic Auth prompt, close the browser (or use a private window).
+
+## 🔐 Security Notes
+
+- `/api/proxy` only fetches `web.archive.org` / `archive.org`, and archived pages are served sandboxed.
+- R2 / S3 endpoints must be `*.r2.cloudflarestorage.com` or `*.amazonaws.com`.
+- `/api/admin/download-source` is off unless `ADMIN_DOWNLOAD_TOKEN` (24+ chars) is set; send it as header `X-Admin-Token`. `.env` and key files are never included in the zip.
+- Saved R2 accounts live only in your browser's `localStorage` (not on the server, not encrypted). Use bucket-scoped R2 tokens and save them only on your own computer.
+- rclone commands use `copy`, never `sync`, so nothing at the destination is deleted.
+
+---
+
 ## 📤 របៀប Upload Project ទៅកាន់ GitHub (Git Commands)
 
 បើលោកអ្នកទើបតែបង្កើត Repository ថ្មីនៅលើ GitHub (ឧទាហរណ៍៖ `web-suite-pro`)៖

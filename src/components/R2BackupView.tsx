@@ -28,33 +28,124 @@ import {
   Check,
   Loader2,
   X,
+  Users,
+  Save,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { R2Credentials, R2ObjectItem, R2BackupProgress } from '../types/r2';
 import { RcloneConfigModal } from './RcloneConfigModal';
 import { triggerFileDownload } from '../utils/zipPackager';
 
-const STORAGE_KEY = 'r2_cloner_credentials';
+// ---------------------------------------------------------------------------
+// Saved accounts (multiple R2 / S3 profiles kept in this browser)
+// ---------------------------------------------------------------------------
+const PROFILES_KEY = 'r2_cloner_profiles';
+const LEGACY_KEY = 'r2_cloner_credentials'; // single-account format used before
+
+interface R2Profile {
+  id: string;
+  name: string;
+  credentials: R2Credentials;
+}
+
+interface ProfileStore {
+  profiles: R2Profile[];
+  activeId: string | null;
+}
+
+const EMPTY_CREDENTIALS: R2Credentials = {
+  accessKeyId: '',
+  secretAccessKey: '',
+  endpoint: '',
+  bucket: '',
+};
+
+function newProfileId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sanitizeCredentials(raw: any): R2Credentials {
+  return {
+    accessKeyId: String(raw?.accessKeyId ?? ''),
+    secretAccessKey: String(raw?.secretAccessKey ?? ''),
+    endpoint: String(raw?.endpoint ?? ''),
+    bucket: String(raw?.bucket ?? ''),
+  };
+}
+
+function loadProfileStore(): ProfileStore {
+  try {
+    const raw = localStorage.getItem(PROFILES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const profiles: R2Profile[] = Array.isArray(parsed?.profiles)
+        ? parsed.profiles
+            .filter((p: any) => p && typeof p.id === 'string')
+            .map((p: any) => ({
+              id: p.id,
+              name: String(p.name || 'Untitled account'),
+              credentials: sanitizeCredentials(p.credentials),
+            }))
+        : [];
+      const activeId = profiles.some((p) => p.id === parsed?.activeId) ? parsed.activeId : null;
+      return { profiles, activeId };
+    }
+
+    // Migrate the old single-account storage into the first saved account
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const creds = sanitizeCredentials(JSON.parse(legacy));
+      localStorage.removeItem(LEGACY_KEY);
+      if (creds.accessKeyId || creds.endpoint) {
+        const migrated: R2Profile = {
+          id: newProfileId(),
+          name: creds.bucket || 'Account 1',
+          credentials: creds,
+        };
+        const store = { profiles: [migrated], activeId: migrated.id };
+        localStorage.setItem(PROFILES_KEY, JSON.stringify(store));
+        return store;
+      }
+    }
+  } catch {
+    // storage unavailable or corrupted: start empty
+  }
+  return { profiles: [], activeId: null };
+}
+
+function persistProfileStore(store: ProfileStore) {
+  try {
+    localStorage.setItem(PROFILES_KEY, JSON.stringify(store));
+  } catch {
+    // ignore (private mode, quota, etc.)
+  }
+}
+
+function sameCredentials(a: R2Credentials, b: R2Credentials) {
+  return (
+    a.accessKeyId === b.accessKeyId &&
+    a.secretAccessKey === b.secretAccessKey &&
+    a.endpoint === b.endpoint &&
+    a.bucket === b.bucket
+  );
+}
 
 export const R2BackupView: React.FC = () => {
-  // Credentials state
-  const [credentials, setCredentials] = useState<R2Credentials>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return {
-      accessKeyId: '',
-      secretAccessKey: '',
-      endpoint: '',
-      bucket: '',
-    };
-  });
+  // Saved accounts
+  const [profileStore, setProfileStore] = useState<ProfileStore>(loadProfileStore);
+  const activeProfile =
+    profileStore.profiles.find((p) => p.id === profileStore.activeId) || null;
+  const [profileName, setProfileName] = useState<string>(() => activeProfile?.name || '');
+  const [confirmDeleteProfile, setConfirmDeleteProfile] = useState<boolean>(false);
 
-  const [rememberCredentials, setRememberCredentials] = useState<boolean>(true);
+  // Credentials state (the account currently shown in the form)
+  const [credentials, setCredentials] = useState<R2Credentials>(
+    () => activeProfile?.credentials || EMPTY_CREDENTIALS
+  );
+
   const [showSecret, setShowSecret] = useState<boolean>(false);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
 
   // Connection & Data state
   const [isConnecting, setIsConnecting] = useState<boolean>(false);
@@ -97,20 +188,133 @@ export const R2BackupView: React.FC = () => {
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
-  // Save credentials to localStorage if toggle enabled
+  const updateProfileStore = (next: ProfileStore) => {
+    setProfileStore(next);
+    persistProfileStore(next);
+  };
+
+  // When only the bucket changes on a saved account, remember it silently
   useEffect(() => {
-    if (rememberCredentials && (credentials.accessKeyId || credentials.endpoint)) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials));
-      } catch {
-        // ignore
-      }
+    if (!activeProfile) return;
+    const saved = activeProfile.credentials;
+    if (
+      saved.bucket !== credentials.bucket &&
+      saved.accessKeyId === credentials.accessKeyId &&
+      saved.secretAccessKey === credentials.secretAccessKey &&
+      saved.endpoint === credentials.endpoint
+    ) {
+      updateProfileStore({
+        ...profileStore,
+        profiles: profileStore.profiles.map((p) =>
+          p.id === activeProfile.id ? { ...p, credentials: { ...p.credentials, bucket: credentials.bucket } } : p
+        ),
+      });
     }
-  }, [credentials, rememberCredentials]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credentials.bucket]);
+
+  const hasUnsavedChanges = activeProfile
+    ? !sameCredentials(activeProfile.credentials, credentials) || profileName.trim() !== activeProfile.name
+    : Boolean(credentials.accessKeyId || credentials.secretAccessKey || credentials.endpoint);
 
   const addLog = (msg: string) => {
     const time = new Date().toLocaleTimeString();
     setLogs((prev) => [...prev, `[${time}] ${msg}`]);
+  };
+
+  // Clear everything that belongs to the previously shown account
+  const resetConnectionView = () => {
+    setAvailableBuckets([]);
+    setObjects([]);
+    setCurrentPrefix('');
+    setSelectedKeys(new Set());
+    setSearchFilter('');
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setConfirmDeleteProfile(false);
+  };
+
+  const handleSwitchProfile = (id: string) => {
+    const target = profileStore.profiles.find((p) => p.id === id) || null;
+    resetConnectionView();
+    setCredentials(target ? target.credentials : EMPTY_CREDENTIALS);
+    setProfileName(target ? target.name : '');
+    setShowSecret(false);
+    updateProfileStore({ ...profileStore, activeId: target ? target.id : null });
+    addLog(target ? `Switched to saved account "${target.name}".` : 'Started a new, unsaved account.');
+  };
+
+  const handleSaveProfile = () => {
+    if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.endpoint) {
+      setErrorMessage('Fill in Endpoint, Access Key ID and Secret Access Key before saving.');
+      return;
+    }
+    const name =
+      profileName.trim() || credentials.bucket || `Account ${profileStore.profiles.length + 1}`;
+
+    if (activeProfile) {
+      updateProfileStore({
+        ...profileStore,
+        profiles: profileStore.profiles.map((p) =>
+          p.id === activeProfile.id ? { ...p, name, credentials } : p
+        ),
+      });
+      setSuccessMessage(`Saved changes to "${name}".`);
+    } else {
+      const created: R2Profile = { id: newProfileId(), name, credentials };
+      updateProfileStore({
+        profiles: [...profileStore.profiles, created],
+        activeId: created.id,
+      });
+      setSuccessMessage(`Saved "${name}". Switch between accounts from the list.`);
+    }
+    setProfileName(name);
+    setErrorMessage(null);
+    addLog(`Saved account "${name}" in this browser.`);
+  };
+
+  const handleDeleteProfile = () => {
+    if (!activeProfile) return;
+    const name = activeProfile.name;
+    updateProfileStore({
+      profiles: profileStore.profiles.filter((p) => p.id !== activeProfile.id),
+      activeId: null,
+    });
+    resetConnectionView();
+    setCredentials(EMPTY_CREDENTIALS);
+    setProfileName('');
+    addLog(`Removed saved account "${name}" from this browser. Nothing was changed on Cloudflare.`);
+  };
+
+  // Download one object without putting keys in the URL
+  const handleDownloadSingle = async (key: string) => {
+    setDownloadingKey(key);
+    setErrorMessage(null);
+    try {
+      const res = await fetch('/api/r2/download-object', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          endpoint: credentials.endpoint,
+          bucket: credentials.bucket,
+          key,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.details || data.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      triggerFileDownload(blob, key.split('/').pop() || 'download');
+      addLog(`✓ Downloaded ${key}`);
+    } catch (err: any) {
+      setErrorMessage(`Download failed: ${err?.message || err}`);
+      addLog(`✗ Download failed for ${key}: ${err?.message || err}`);
+    } finally {
+      setDownloadingKey(null);
+    }
   };
 
   // Test connection & load buckets
@@ -607,6 +811,108 @@ export const R2BackupView: React.FC = () => {
           </button>
         </div>
 
+        {/* Saved accounts */}
+        <div className="bg-zinc-950/60 border border-zinc-800 rounded-lg p-3 space-y-2 text-xs">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label
+                htmlFor="r2-saved-account"
+                className="text-zinc-300 font-mono text-[11px] font-medium flex items-center gap-1"
+              >
+                <Users className="w-3.5 h-3.5 text-amber-400" />
+                Saved accounts
+                {profileStore.profiles.length > 0 && (
+                  <span className="text-zinc-500 font-normal">({profileStore.profiles.length})</span>
+                )}
+              </label>
+              <select
+                id="r2-saved-account"
+                value={profileStore.activeId ?? ''}
+                onChange={(e) => handleSwitchProfile(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono text-zinc-100 outline-none focus:border-amber-500"
+              >
+                <option value="">+ New account</option>
+                {profileStore.profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.credentials.bucket && p.credentials.bucket !== p.name ? ` (${p.credentials.bucket})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex-1 min-w-[180px] space-y-1">
+              <label htmlFor="r2-account-name" className="text-zinc-300 font-mono text-[11px] font-medium block">
+                Account name
+              </label>
+              <input
+                id="r2-account-name"
+                type="text"
+                value={profileName}
+                onChange={(e) => setProfileName(e.target.value)}
+                placeholder="e.g. Policlinico, Client B"
+                maxLength={60}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveProfile}
+              disabled={!hasUnsavedChanges}
+              className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 border border-zinc-700 font-semibold flex items-center gap-1.5 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5 text-amber-400" />
+              {activeProfile ? 'Save changes' : 'Save account'}
+            </button>
+
+            {activeProfile &&
+              (confirmDeleteProfile ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleDeleteProfile}
+                    className="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDeleteProfile(false)}
+                    className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteProfile(true)}
+                  className="p-2 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-zinc-800 border border-zinc-800 cursor-pointer"
+                  title="Remove this saved account from the browser"
+                  aria-label="Remove this saved account from the browser"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              ))}
+          </div>
+
+          <p className="text-[11px] text-zinc-500">
+            {confirmDeleteProfile && activeProfile ? (
+              <span className="text-rose-300">
+                Remove “{activeProfile.name}” from this browser? Buckets and files on Cloudflare are not touched.
+              </span>
+            ) : hasUnsavedChanges ? (
+              <span className="text-amber-300">
+                {activeProfile ? 'You have unsaved changes to this account.' : 'This account is not saved yet.'}
+              </span>
+            ) : (
+              'Switching accounts never changes anything on Cloudflare.'
+            )}{' '}
+            Saved keys are stored unencrypted in this browser, so only save them on your own computer.
+          </p>
+        </div>
+
         {/* Inputs Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
           {/* Endpoint */}
@@ -736,15 +1042,15 @@ export const R2BackupView: React.FC = () => {
 
         {/* Options & Status */}
         <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
-          <label className="flex items-center gap-2 text-zinc-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={rememberCredentials}
-              onChange={(e) => setRememberCredentials(e.target.checked)}
-              className="rounded bg-zinc-950 border-zinc-800 text-amber-500 focus:ring-0"
-            />
-            <span>Remember credentials in browser storage</span>
-          </label>
+          <span className="text-zinc-500">
+            {activeProfile ? (
+              <>
+                Account: <span className="text-zinc-300 font-medium">{activeProfile.name}</span>
+              </>
+            ) : (
+              'Unsaved account'
+            )}
+          </span>
 
           {errorMessage && (
             <div className="text-rose-400 flex items-center gap-1.5 text-xs bg-rose-950/40 border border-rose-900/60 px-2.5 py-1 rounded-md">
@@ -972,22 +1278,20 @@ export const R2BackupView: React.FC = () => {
                     <td className="py-2 px-3 text-right">
                       {!item.isFolder && (
                         <div className="flex items-center justify-end gap-1.5">
-                          <a
-                            href={`/api/r2/download-object?accessKeyId=${encodeURIComponent(
-                              credentials.accessKeyId
-                            )}&secretAccessKey=${encodeURIComponent(
-                              credentials.secretAccessKey
-                            )}&endpoint=${encodeURIComponent(
-                              credentials.endpoint
-                            )}&bucket=${encodeURIComponent(
-                              credentials.bucket
-                            )}&key=${encodeURIComponent(item.key)}`}
-                            download
-                            className="text-zinc-500 hover:text-amber-400 p-1 rounded inline-block transition"
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadSingle(item.key)}
+                            disabled={downloadingKey === item.key}
+                            className="text-zinc-500 hover:text-amber-400 p-1 rounded inline-block transition cursor-pointer disabled:cursor-wait"
                             title="Download single file"
+                            aria-label={`Download ${item.name}`}
                           >
-                            <Download className="w-3.5 h-3.5" />
-                          </a>
+                            {downloadingKey === item.key ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Download className="w-3.5 h-3.5" />
+                            )}
+                          </button>
                           <button
                             type="button"
                             onClick={() => setDeleteConfirmKey(item.key)}

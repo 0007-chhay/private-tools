@@ -30,19 +30,63 @@ const ai = new GoogleGenAI({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Site login (HTTP Basic Auth) for Docker / VPS / local runs.
+// On Vercel the same check runs earlier in middleware.ts.
+// Enabled only when SITE_USERNAME + SITE_PASSWORD or SITE_USERS is set,
+// so `npm run dev` on your own computer stays open unless you set them.
+// ---------------------------------------------------------------------------
+function loadSiteUsers(): Map<string, string> {
+  const users = new Map<string, string>();
+  for (const entry of (process.env.SITE_USERS || '').split(',')) {
+    const i = entry.indexOf(':');
+    if (i <= 0) continue;
+    const name = entry.slice(0, i).trim();
+    const pass = entry.slice(i + 1).trim();
+    if (name && pass) users.set(name, pass);
+  }
+  const n = (process.env.SITE_USERNAME || '').trim();
+  const pw = (process.env.SITE_PASSWORD || '').trim();
+  if (n && pw) users.set(n, pw);
+  return users;
+}
+
+function hashEqual(a: string, b: string): boolean {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+const siteUsers = loadSiteUsers();
+if (siteUsers.size > 0) {
+  app.use((req, res, next) => {
+    const header = req.headers.authorization || '';
+    if (header.startsWith('Basic ')) {
+      const decoded = Buffer.from(header.slice(6).trim(), 'base64').toString('utf8');
+      const i = decoded.indexOf(':');
+      if (i >= 0) {
+        const user = decoded.slice(0, i);
+        const pass = decoded.slice(i + 1);
+        let ok = false;
+        for (const [name, pw] of siteUsers) {
+          const nameOk = hashEqual(user, name);
+          const passOk = hashEqual(pass, pw);
+          if (nameOk && passOk) ok = true;
+        }
+        if (ok) return next();
+      }
+    }
+    res.setHeader('WWW-Authenticate', 'Basic realm="Private Tools", charset="UTF-8"');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(401).send('Login required.');
+  });
+}
+
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Enable CORS for all API routes
-app.use('/api', (req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
+// No CORS headers: the frontend is served from the same origin, so other
+// websites have no reason to call this API from a visitor's browser.
 
 // In-memory cache for fetched assets to avoid redundant upstream requests and 429s
 const assetCache = new Map<string, { buffer: Buffer; contentType: string; cachedAt: number }>();
@@ -267,11 +311,29 @@ app.get('/api/snapshot-lookup', async (req: Request, res: Response) => {
 });
 
 // R2 / S3 Client helper
-function getR2Client(accessKeyId: string, secretAccessKey: string, endpoint: string) {
-  let cleanEndpoint = endpoint.trim();
-  if (!cleanEndpoint.startsWith('http://') && !cleanEndpoint.startsWith('https://')) {
-    cleanEndpoint = `https://${cleanEndpoint}`;
+// Only real Cloudflare R2 / AWS S3 endpoints may be used. Otherwise the server
+// could be pointed at internal addresses (localhost, cloud metadata, LAN).
+function validateStorageEndpoint(endpoint: string): string {
+  let clean = String(endpoint || '').trim();
+  if (!/^https?:\/\//i.test(clean)) clean = `https://${clean}`;
+  let u: URL;
+  try {
+    u = new URL(clean);
+  } catch {
+    throw new Error('Invalid endpoint URL');
   }
+  const host = u.hostname.toLowerCase();
+  const allowed = host.endsWith('.r2.cloudflarestorage.com') || host.endsWith('.amazonaws.com');
+  if (u.protocol !== 'https:' || !allowed || u.username || u.password || (u.port && u.port !== '443')) {
+    throw new Error(
+      'Endpoint must be https://<account_id>.r2.cloudflarestorage.com (or an AWS S3 endpoint)'
+    );
+  }
+  return `https://${host}`;
+}
+
+function getR2Client(accessKeyId: string, secretAccessKey: string, endpoint: string) {
+  const cleanEndpoint = validateStorageEndpoint(endpoint);
   return new S3Client({
     region: 'auto',
     endpoint: cleanEndpoint,
@@ -350,12 +412,9 @@ app.post('/api/r2/list-objects', async (req: Request, res: Response) => {
 });
 
 // R2 Download Object
-app.all('/api/r2/download-object', async (req: Request, res: Response) => {
-  const accessKeyId = (req.body?.accessKeyId || req.query.accessKeyId) as string;
-  const secretAccessKey = (req.body?.secretAccessKey || req.query.secretAccessKey) as string;
-  const endpoint = (req.body?.endpoint || req.query.endpoint) as string;
-  const bucket = (req.body?.bucket || req.query.bucket) as string;
-  const key = (req.body?.key || req.query.key) as string;
+// POST only: credentials must never travel in the URL (logs, history, referrers)
+app.post('/api/r2/download-object', async (req: Request, res: Response) => {
+  const { accessKeyId, secretAccessKey, endpoint, bucket, key } = req.body || {};
 
   if (!accessKeyId || !secretAccessKey || !endpoint || !bucket || !key) {
     return res.status(400).json({ error: 'Missing required parameters for object download' });
@@ -989,14 +1048,15 @@ app.post('/api/telegram/send-message', async (req: Request, res: Response) => {
 
 // Admin source code download.
 // Disabled unless ADMIN_DOWNLOAD_TOKEN is set (at least 24 characters), and
-// requires header:  Authorization: Bearer <ADMIN_DOWNLOAD_TOKEN>
+// requires header:  X-Admin-Token: <ADMIN_DOWNLOAD_TOKEN>
+// (the Authorization header is used by the site login)
 // Example:
-//   curl -H "Authorization: Bearer $ADMIN_DOWNLOAD_TOKEN" -o source.zip https://your-app/api/admin/download-source
+//   curl -u USER:PASSWORD -H "X-Admin-Token: $ADMIN_DOWNLOAD_TOKEN" -o source.zip https://your-app/api/admin/download-source
 function isAdminAuthorized(req: Request): boolean {
   const expected = process.env.ADMIN_DOWNLOAD_TOKEN || '';
   if (expected.length < 24) return false;
-  const header = req.headers.authorization || '';
-  const provided = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const headerValue = req.headers['x-admin-token'];
+  const provided = (Array.isArray(headerValue) ? headerValue[0] : headerValue || '').trim();
   const a = crypto.createHash('sha256').update(provided).digest();
   const b = crypto.createHash('sha256').update(expected).digest();
   return provided.length > 0 && crypto.timingSafeEqual(a, b);
