@@ -40,10 +40,11 @@ import {
   PYTHON_SCRAPER_SCRIPT,
   REGIONS,
 } from '../utils/trendsData';
+import { FacebookReelsPlanner } from './FacebookReelsPlanner';
 
 export const TrendAnalyticsView: React.FC = () => {
   // Main Tab: 'trends' | 'analytics'
-  const [activeTab, setActiveTab] = useState<'trends' | 'analytics'>('trends');
+  const [activeTab, setActiveTab] = useState<'trends' | 'analytics' | 'reels'>('trends');
 
   // Filters for Trends
   const [selectedRegion, setSelectedRegion] = useState<RegionCode>('KH');
@@ -297,7 +298,7 @@ export const TrendAnalyticsView: React.FC = () => {
       </section>
 
       {/* Main Tabs Navigation */}
-      <div className="flex items-center gap-2 border-b border-zinc-800 pb-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 pb-2">
         <button
           type="button"
           onClick={() => setActiveTab('trends')}
@@ -323,7 +324,23 @@ export const TrendAnalyticsView: React.FC = () => {
           <BarChart3 className="w-3.5 h-3.5" />
           <span>📊 2. TikTok Analytics &amp; Peak Hours (ម៉ោង Post ល្អបំផុត)</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('reels')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium transition cursor-pointer ${
+            activeTab === 'reels'
+              ? 'bg-blue-600 text-white font-semibold shadow-sm'
+              : 'bg-zinc-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800'
+          }`}
+        >
+          <Video className="w-3.5 h-3.5" />
+          <span>📘 3. Facebook Reels (មុនពេល Post)</span>
+        </button>
       </div>
+
+      {/* TAB 3: FACEBOOK REELS PRE-POST PLANNER */}
+      {activeTab === 'reels' && <FacebookReelsPlanner />}
 
       {/* TAB 1: TRENDS & HASHTAGS ANALYZER */}
       {activeTab === 'trends' && (
