@@ -4,7 +4,7 @@ import {
   Cloud,
   KeyRound,
   TrendingUp,
-  Send,
+  Globe,
   ArrowRight,
   Search,
   Sparkles,
@@ -15,7 +15,7 @@ import { ToolMode } from './Header';
 export interface ToolItem {
   id: ToolMode;
   name: string;
-  category: 'Generative AI' | 'Web Archiving' | 'Cloud Storage' | 'Security' | 'Social Growth' | 'Automation';
+  category: 'Generative AI' | 'Web Archiving' | 'Cloud Storage' | 'Security' | 'Social Growth' | 'Web Utilities';
   description: string;
   icon: React.ReactNode;
   tag: string;
@@ -78,14 +78,14 @@ export const TOOLS_LIST: ToolItem[] = [
     features: ['Viral Hashtags Tracker', 'Trending Audio Engine', '24x7 Posting Heatmap'],
   },
   {
-    id: 'telegram_auto_reply',
-    name: 'Telegram Auto-Reply & Anti-Spam Deflector',
-    category: 'Automation',
-    tag: 'Automation',
-    icon: <Send className="w-5 h-5" />,
+    id: 'domain_extractor',
+    name: 'Domain Extractor',
+    category: 'Web Utilities',
+    tag: 'Web Utilities',
+    icon: <Globe className="w-5 h-5" />,
     description:
-      'Automatically deflect annoying spam, loan scams, and harassment on Telegram DMs with custom keyword triggers, fallback timers, and 24/7 personal UserBot automation scripts.',
-    features: ['Anti-Spam Filter', 'UserBot Python Script', 'Live DM Simulator'],
+      'Paste a list of URLs and get clean domains back. Removes https://, http://, paths and trailing slashes, keeps subdomains, and lets you choose whether to strip www.',
+    features: ['Remove all / Keep www', 'Keeps subdomains', 'TXT download'],
   },
 ];
 
@@ -93,7 +93,7 @@ export const AllToolsGridView: React.FC<AllToolsGridViewProps> = ({ onSelectTool
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
-  const categories = ['All', 'Generative AI', 'Web Archiving', 'Cloud Storage', 'Security', 'Social Growth', 'Automation'];
+  const categories = ['All', 'Generative AI', 'Web Archiving', 'Cloud Storage', 'Security', 'Social Growth', 'Web Utilities'];
 
   const filteredTools = TOOLS_LIST.filter((tool) => {
     const matchesCategory = selectedCategory === 'All' || tool.category === selectedCategory;

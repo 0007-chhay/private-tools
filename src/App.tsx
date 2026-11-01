@@ -10,7 +10,7 @@ import { ConfigModal } from './components/ConfigModal';
 import { R2BackupView } from './components/R2BackupView';
 import { PasswordGeneratorView } from './components/PasswordGeneratorView';
 import { TrendAnalyticsView } from './components/TrendAnalyticsView';
-import { TelegramAutoReplyView } from './components/TelegramAutoReplyView';
+import { DomainExtractorView } from './components/DomainExtractorView';
 import { AllToolsGridView } from './components/AllToolsGridView';
 import { SuperIntelligentView } from './components/SuperIntelligentView';
 import {
@@ -197,9 +197,9 @@ export default function App() {
             {currentTool === 'super_intelligent' ? (
               /* Mode: Super-Intelligent AI Studio */
               <SuperIntelligentView />
-            ) : currentTool === 'telegram_auto_reply' ? (
-              /* Mode 5: Telegram Auto-Reply & Anti-Spam Deflector */
-              <TelegramAutoReplyView />
+            ) : currentTool === 'domain_extractor' ? (
+              /* Mode 5: Domain Extractor (URL list -> domains) */
+              <DomainExtractorView />
             ) : currentTool === 'trend_analytics' ? (
               /* Mode 4: Viral Trends, Hashtags & TikTok Analytics */
               <TrendAnalyticsView />

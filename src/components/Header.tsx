@@ -8,7 +8,7 @@ import {
   KeyRound,
   TrendingUp,
   BarChart3,
-  Send,
+  Globe,
   LayoutGrid,
   Sparkles,
 } from 'lucide-react';
@@ -20,7 +20,7 @@ export type ToolMode =
   | 'rclone_r2'
   | 'password_gen'
   | 'trend_analytics'
-  | 'telegram_auto_reply';
+  | 'domain_extractor';
 
 interface HeaderProps {
   currentTool: ToolMode;
@@ -132,16 +132,16 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               type="button"
-              onClick={() => onSelectTool('telegram_auto_reply')}
+              onClick={() => onSelectTool('domain_extractor')}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                currentTool === 'telegram_auto_reply'
-                  ? 'bg-sky-500 text-zinc-950 shadow font-bold'
+                currentTool === 'domain_extractor'
+                  ? 'bg-amber-500 text-zinc-950 shadow'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850'
               }`}
             >
-              <Send className="w-3.5 h-3.5 shrink-0" />
-              <span className="hidden sm:inline">Telegram Auto-Reply</span>
-              <span className="sm:hidden">Telegram</span>
+              <Globe className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">Domain Extractor</span>
+              <span className="sm:hidden">Domains</span>
             </button>
           </div>
 
@@ -199,11 +199,11 @@ export const Header: React.FC<HeaderProps> = ({
                 </>
               ) : (
                 <>
-                  <span>Anti-Spam Filter</span>
+                  <span>URL → Domain</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span>Auto-Reply Engine</span>
+                  <span>Keep Subdomains</span>
                   <span aria-hidden="true" className="text-zinc-600">·</span>
-                  <span>Personal UserBot</span>
+                  <span>TXT Export</span>
                 </>
               )}
             </p>
@@ -258,8 +258,8 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           ) : (
             <div className="flex items-center gap-2 text-xs text-zinc-400 bg-zinc-900/60 border border-zinc-800 px-3 py-1.5 rounded-md font-mono">
-              <Send className="w-3.5 h-3.5 text-sky-400" />
-              <span>Telegram Anti-Spam</span>
+              <Globe className="w-3.5 h-3.5 text-amber-400" />
+              <span>URL List → Domains</span>
             </div>
           )}
         </div>

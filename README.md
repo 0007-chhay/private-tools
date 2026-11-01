@@ -32,12 +32,11 @@ A comprehensive webmaster, storage automation, and content creator productivity 
 - **Viral Hook Formulas:** Pre-built high-converting hooks for Business, Comedy, Food, and Tech in Khmer.
 - **Ready-to-run Scraper Scripts:** Exportable Python (Playwright) and Node.js scraper scripts for automated background scraping.
 
-### 5. 🤖 Telegram Auto-Responder & Anti-Spam Deflector
-- **Personal Account UserBot & Bot API:** Supports replying from personal Telegram accounts (Telethon MTProto) or official Telegram Bots (@BotFather).
-- **Intelligent Keyword & Spam Detection:** Intercepts loan scams (កម្ចី/ការប្រាក់), fake crypto/forex, unsolicited links (`t.me/`, `http`), and harassment in real-time.
-- **Customizable Khmer Templates:** Pre-set warning templates, strict auto-block deflectors, and human verification (CAPTCHA) quizzes.
-- **Live Simulator & Audit Logs:** Interactive chat simulator to test keyword matching, response formatting, and live interception history.
-- **Ready-to-run 24/7 Scripts:** Instant copy and download of Python (`telethon`) and Node.js (`telegraf`) scripts for hosting on a VPS or home PC.
+### 5. 🌍 Domain Extractor
+- **URL list → domains:** Paste URLs (one per line, or comma/space separated) and get clean domains. Removes `https://`, `http://`, paths, query strings, ports and trailing slashes.
+- **Subdomains kept:** `https://patna.example.com/` → `patna.example.com`.
+- **Two modes:** *Remove all* strips `www.` as well; *ទុក www* keeps it.
+- **Copy / TXT download:** Duplicates and invalid lines are skipped and counted. Runs entirely in the browser.
 
 ---
 

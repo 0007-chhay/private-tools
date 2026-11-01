@@ -930,122 +930,6 @@ app.post('/api/tiktok/verify-analytics', async (req: Request, res: Response) => 
 });
 
 
-// Telegram Auto-Responder & Anti-Spam APIs
-app.post('/api/telegram/test-bot', async (req: Request, res: Response) => {
-  const { botToken } = req.body || {};
-
-  if (!botToken || typeof botToken !== 'string' || botToken.trim() === '') {
-    return res.status(400).json({
-      success: false,
-      error: 'សូមបញ្ចូល Telegram Bot Token ដែលបានមកពី @BotFather',
-    });
-  }
-
-  const cleanToken = botToken.trim();
-
-  // If token is a test/demo keyword
-  if (cleanToken === 'demo' || cleanToken.toLowerCase() === 'test') {
-    return res.json({
-      success: true,
-      mode: 'demo',
-      bot: {
-        id: 7924180421,
-        is_bot: true,
-        first_name: 'AntiSpam Defender Bot',
-        username: 'antispam_deflector_bot',
-        can_join_groups: true,
-        can_read_all_group_messages: false,
-        supports_inline_queries: false,
-      },
-      message: 'បានតភ្ជាប់ទៅកាន់ Telegram Bot (Demo Mode) ដោយជោគជ័យ!',
-    });
-  }
-
-  try {
-    const tgRes = await fetch(`https://api.telegram.org/bot${cleanToken}/getMe`);
-    const data = await tgRes.json();
-
-    if (data.ok && data.result) {
-      return res.json({
-        success: true,
-        mode: 'live',
-        bot: data.result,
-        message: `បានតភ្ជាប់ទៅកាន់ Bot @${data.result.username} ដោយជោគជ័យ!`,
-      });
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: data.description || 'Bot Token មិនត្រឹមត្រូវ ឬត្រូវបាន Revoke។',
-      });
-    }
-  } catch (err: any) {
-    return res.status(502).json({
-      success: false,
-      error: 'មិនអាចទាក់ទងទៅកាន់ Telegram API Servers បានទេ (Network error)',
-      details: err?.message || String(err),
-    });
-  }
-});
-
-app.post('/api/telegram/send-message', async (req: Request, res: Response) => {
-  const { botToken, chatId, text } = req.body || {};
-
-  if (!chatId || !text) {
-    return res.status(400).json({
-      success: false,
-      error: 'Chat ID និង Text Message មិនអាចទទេបានទេ។',
-    });
-  }
-
-  // If botToken provided, make actual request to Telegram API
-  if (botToken && botToken.trim() !== '' && botToken !== 'demo') {
-    try {
-      const tgRes = await fetch(`https://api.telegram.org/bot${botToken.trim()}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: text,
-        }),
-      });
-
-      const data = await tgRes.json();
-      if (data.ok) {
-        return res.json({
-          success: true,
-          mode: 'live',
-          result: data.result,
-          message: 'សារស្វ័យប្រវត្តិត្រូវបានផ្ញើទៅកាន់ Telegram ដោយជោគជ័យ!',
-        });
-      } else {
-        return res.status(400).json({
-          success: false,
-          error: data.description || 'បរាជ័យក្នុងការផ្ញើសារតាម Telegram',
-        });
-      }
-    } catch (err: any) {
-      return res.status(502).json({
-        success: false,
-        error: 'Telegram API request failed',
-        details: err?.message,
-      });
-    }
-  }
-
-  // Simulation mode
-  return res.json({
-    success: true,
-    mode: 'simulation',
-    result: {
-      message_id: Math.floor(Math.random() * 899999) + 100000,
-      chat: { id: chatId },
-      date: Math.floor(Date.now() / 1000),
-      text,
-    },
-    message: '[Simulation] សារឆ្លើយតបស្វ័យប្រវត្តិក្លែងធ្វើត្រូវបានបញ្ជូនដោយជោគជ័យ!',
-  });
-});
-
 // Admin source code download.
 // Disabled unless ADMIN_DOWNLOAD_TOKEN is set (at least 24 characters), and
 // requires header:  X-Admin-Token: <ADMIN_DOWNLOAD_TOKEN>
@@ -1710,7 +1594,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
       'Rclone R2 Backup',
       'Bulk Password Generator',
       'Trend Analytics',
-      'Telegram Auto-Responder',
+      'Domain Extractor',
     ],
   });
 });
