@@ -347,22 +347,45 @@ function getR2Client(accessKeyId: string, secretAccessKey: string, endpoint: str
 
 // R2 Test Connection & List Buckets
 app.post('/api/r2/test-connection', async (req: Request, res: Response) => {
-  const { accessKeyId, secretAccessKey, endpoint } = req.body || {};
+  const { accessKeyId, secretAccessKey, endpoint, bucket } = req.body || {};
 
   if (!accessKeyId || !secretAccessKey || !endpoint) {
     return res.status(400).json({ error: 'Missing accessKeyId, secretAccessKey, or endpoint' });
   }
 
+  const bucketName = String(bucket || '').trim();
+  const isAccessDenied = (e: any) =>
+    e?.name === 'AccessDenied' || e?.Code === 'AccessDenied' || e?.$metadata?.httpStatusCode === 403;
+
   try {
     const client = getR2Client(accessKeyId, secretAccessKey, endpoint);
+
+    // A bucket-scoped R2 token ("Apply to specific buckets only") is NOT allowed
+    // to call ListBuckets and gets "Access Denied". So when a bucket name is
+    // given, test the connection against that bucket instead.
+    if (bucketName) {
+      try {
+        await client.send(new ListObjectsV2Command({ Bucket: bucketName, MaxKeys: 1 }));
+        return res.json({ success: true, buckets: [bucketName], scoped: true });
+      } catch (err: any) {
+        if (!isAccessDenied(err)) throw err;
+        // fall through: maybe an account-wide token and the bucket name is wrong
+      }
+    }
+
     const result = await client.send(new ListBucketsCommand({}));
     const buckets = (result.Buckets || []).map((b) => b.Name).filter(Boolean);
     res.json({ success: true, buckets });
   } catch (err: any) {
     console.error('R2 test connection error:', err?.message || err);
+    const details = isAccessDenied(err)
+      ? bucketName
+        ? `Access Denied for bucket "${bucketName}". Check the bucket name is exact and this API token has access to it (Object Read or Read & Write).`
+        : 'Access Denied: this token cannot list all buckets (bucket-scoped token). Type the bucket name in the Bucket field, then Connect again.'
+      : err?.message || String(err);
     res.status(502).json({
       error: 'Failed to connect to Cloudflare R2',
-      details: err?.message || String(err),
+      details,
     });
   }
 });

@@ -337,6 +337,7 @@ export const R2BackupView: React.FC = () => {
           accessKeyId: credentials.accessKeyId,
           secretAccessKey: credentials.secretAccessKey,
           endpoint: credentials.endpoint,
+          bucket: credentials.bucket.trim(),
         }),
       });
 
