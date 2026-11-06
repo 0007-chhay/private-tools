@@ -392,7 +392,15 @@ app.post('/api/r2/test-connection', async (req: Request, res: Response) => {
 
 // R2 List Objects in Bucket
 app.post('/api/r2/list-objects', async (req: Request, res: Response) => {
-  const { accessKeyId, secretAccessKey, endpoint, bucket, prefix = '', delimiter = '' } = req.body || {};
+  const {
+    accessKeyId,
+    secretAccessKey,
+    endpoint,
+    bucket,
+    prefix = '',
+    delimiter = '',
+    continuationToken = '',
+  } = req.body || {};
 
   if (!accessKeyId || !secretAccessKey || !endpoint || !bucket) {
     return res.status(400).json({ error: 'Missing required credentials, endpoint, or bucket name' });
@@ -404,6 +412,7 @@ app.post('/api/r2/list-objects', async (req: Request, res: Response) => {
       Bucket: bucket,
       Prefix: prefix || undefined,
       Delimiter: delimiter || undefined,
+      ContinuationToken: continuationToken || undefined,
       MaxKeys: 1000,
     });
 
@@ -534,11 +543,20 @@ app.post('/api/r2/upload-object', async (req: Request, res: Response) => {
 
 // R2 Delete Object Endpoint
 app.post('/api/r2/delete-object', async (req: Request, res: Response) => {
-  const { accessKeyId, secretAccessKey, endpoint, bucket, key } = req.body || {};
+  const { accessKeyId, secretAccessKey, endpoint, bucket, key, confirmKey } = req.body || {};
 
   if (!accessKeyId || !secretAccessKey || !endpoint || !bucket || !key) {
     return res.status(400).json({
       error: 'Missing required parameters (accessKeyId, secretAccessKey, endpoint, bucket, key)',
+    });
+  }
+
+  // Safety: nothing is deleted unless the request repeats the exact key that the
+  // person confirmed in the "Delete Object from R2?" dialog.
+  if (confirmKey !== key) {
+    return res.status(400).json({
+      error: 'Delete not confirmed',
+      details: 'Deleting from R2 must be confirmed first. Nothing was deleted.',
     });
   }
 

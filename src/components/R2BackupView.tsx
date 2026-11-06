@@ -188,6 +188,40 @@ export const R2BackupView: React.FC = () => {
   const [deleteConfirmKey, setDeleteConfirmKey] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
+  // Upload overwrite confirmation: files that already exist in R2
+  const [overwriteConflicts, setOverwriteConflicts] = useState<string[] | null>(null);
+
+  // List every object under a prefix (all sub-folders, all pages)
+  const listAllObjectsUnder = async (
+    prefix: string,
+    delimiter = ''
+  ): Promise<{ key: string; size: number }[]> => {
+    const all: { key: string; size: number }[] = [];
+    let token = '';
+    do {
+      const res = await fetch('/api/r2/list-objects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          endpoint: credentials.endpoint,
+          bucket: credentials.bucket,
+          prefix,
+          delimiter,
+          continuationToken: token,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.details || data.error || `Failed to list "${prefix}"`);
+      }
+      for (const o of data.objects || []) all.push({ key: o.key, size: o.size || 0 });
+      token = data.isTruncated && data.nextContinuationToken ? data.nextContinuationToken : '';
+    } while (token);
+    return all;
+  };
+
   const updateProfileStore = (next: ProfileStore) => {
     setProfileStore(next);
     persistProfileStore(next);
@@ -463,6 +497,7 @@ export const R2BackupView: React.FC = () => {
     }
     setUploadDestinationPrefix(currentPrefix);
     setSelectedFiles([]);
+    setOverwriteConflicts(null);
     setUploadError(null);
     setUploadSuccess(null);
     setUploadProgressPercent(0);
@@ -491,10 +526,11 @@ export const R2BackupView: React.FC = () => {
   // Remove file from staged upload list
   const handleRemoveFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setOverwriteConflicts(null);
   };
 
   // Upload files to R2 via /api/r2/upload-object
-  const handleUploadFilesToR2 = async () => {
+  const handleUploadFilesToR2 = async (allowOverwrite = false) => {
     if (selectedFiles.length === 0) {
       setUploadError('Please select at least one file to upload.');
       return;
@@ -503,6 +539,38 @@ export const R2BackupView: React.FC = () => {
       setUploadError('Please connect and select a bucket first.');
       return;
     }
+
+    // Uploading a file with the same name replaces (deletes) the old one in R2,
+    // so ask first when any of the files already exist.
+    if (!allowOverwrite) {
+      let destPrefix = uploadDestinationPrefix.trim();
+      if (destPrefix && !destPrefix.endsWith('/')) destPrefix += '/';
+      if (destPrefix.startsWith('/')) destPrefix = destPrefix.substring(1);
+      try {
+        setIsUploading(true);
+        setCurrentUploadingFile('Checking for files that already exist...');
+        const existing = new Set(
+          (await listAllObjectsUnder(destPrefix, '/')).map((o) => o.key)
+        );
+        const conflicts = selectedFiles
+          .map((f) => `${destPrefix}${f.name}`)
+          .filter((k) => existing.has(k));
+        if (conflicts.length > 0) {
+          setOverwriteConflicts(conflicts);
+          setIsUploading(false);
+          setCurrentUploadingFile('');
+          return;
+        }
+      } catch (err: any) {
+        setIsUploading(false);
+        setCurrentUploadingFile('');
+        setUploadError(
+          `Could not check for existing files, so nothing was uploaded: ${err?.message || err}`
+        );
+        return;
+      }
+    }
+    setOverwriteConflicts(null);
 
     setIsUploading(true);
     setUploadError(null);
@@ -588,6 +656,11 @@ export const R2BackupView: React.FC = () => {
     if (!credentials.accessKeyId || !credentials.secretAccessKey || !credentials.endpoint || !credentials.bucket) {
       return;
     }
+    // Only delete a file the person confirmed in the dialog
+    if (deleteConfirmKey !== key) {
+      setDeleteConfirmKey(key);
+      return;
+    }
 
     setIsDeleting(true);
     addLog(`Deleting object "${key}" from R2...`);
@@ -602,6 +675,7 @@ export const R2BackupView: React.FC = () => {
           endpoint: credentials.endpoint,
           bucket: credentials.bucket,
           key,
+          confirmKey: deleteConfirmKey,
         }),
       });
 
@@ -634,7 +708,7 @@ export const R2BackupView: React.FC = () => {
 
   // Toggle select all files in current view
   const toggleSelectAll = () => {
-    const fileKeys = objects.filter((o) => !o.isFolder).map((o) => o.key);
+    const fileKeys = objects.map((o) => o.key);
     if (selectedKeys.size === fileKeys.length) {
       setSelectedKeys(new Set());
     } else {
@@ -651,77 +725,126 @@ export const R2BackupView: React.FC = () => {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
-  // Backup / Download selected or all files as .ZIP
+  // Backup / Download selected or all files as .ZIP (read-only: nothing is deleted from R2)
+  // Folders are included with all their sub-folders.
   const handleBackupToZip = async () => {
-    const filesToDownload = objects.filter(
-      (o) => !o.isFolder && (selectedKeys.size === 0 || selectedKeys.has(o.key))
-    );
-
-    if (filesToDownload.length === 0) {
-      setErrorMessage('No files available or selected to backup.');
+    const selected = objects.filter((o) => selectedKeys.size === 0 || selectedKeys.has(o.key));
+    if (selected.length === 0) {
+      setErrorMessage('No files or folders available or selected to backup.');
       return;
     }
 
-    const total = filesToDownload.length;
     setBackupProgress({
-      status: 'downloading',
-      currentFile: 'Starting download...',
+      status: 'listing',
+      currentFile: 'Listing files in folders...',
       completedFiles: 0,
-      totalFiles: total,
+      totalFiles: 0,
       downloadedBytes: 0,
       percent: 0,
     });
-
-    addLog(`Starting backup of ${total} file(s) from bucket "${credentials.bucket}"...`);
+    addLog(`Starting backup from bucket "${credentials.bucket}" (read-only, nothing will be deleted)...`);
 
     const zip = new JSZip();
     let completed = 0;
     let totalBytes = 0;
+    const failed: { key: string; reason: string }[] = [];
 
     try {
+      // 1) Build the full list of files, walking into selected folders
+      const fileMap = new Map<string, number>();
+      for (const item of selected) {
+        if (item.isFolder) {
+          const folderPrefix = item.prefix || item.key;
+          addLog(`Listing folder "${folderPrefix}" (with sub-folders)...`);
+          const inside = await listAllObjectsUnder(folderPrefix);
+          for (const o of inside) fileMap.set(o.key, o.size);
+          addLog(`  found ${inside.length} item(s) in "${folderPrefix}"`);
+        } else {
+          fileMap.set(item.key, item.size);
+        }
+      }
+
+      // Folder markers (keys ending in "/") become empty folders in the ZIP
+      const relative = (key: string) =>
+        currentPrefix && key.startsWith(currentPrefix) ? key.slice(currentPrefix.length) : key;
+      const filesToDownload: { key: string; size: number }[] = [];
+      for (const [key, size] of fileMap) {
+        if (key.endsWith('/')) {
+          const rel = relative(key);
+          if (rel) zip.folder(rel.replace(/\/$/, ''));
+        } else {
+          filesToDownload.push({ key, size });
+        }
+      }
+
+      const total = filesToDownload.length;
+      if (total === 0) {
+        throw new Error('The selected folders are empty. Nothing to back up.');
+      }
+      addLog(`Backing up ${total} file(s)...`);
+      setBackupProgress((prev) => ({ ...prev, status: 'downloading', totalFiles: total }));
+
+      // 2) Download each file; a failed file is skipped, the rest continue
+      let done = 0;
       for (const item of filesToDownload) {
         setBackupProgress((prev) => ({
           ...prev,
           currentFile: item.key,
-          percent: Math.floor((completed / total) * 85),
+          percent: Math.floor((done / total) * 85),
         }));
         addLog(`Downloading: ${item.key} (${formatBytes(item.size)})...`);
 
-        const res = await fetch('/api/r2/download-object', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accessKeyId: credentials.accessKeyId,
-            secretAccessKey: credentials.secretAccessKey,
-            endpoint: credentials.endpoint,
-            bucket: credentials.bucket,
-            key: item.key,
-          }),
-        });
+        try {
+          const res = await fetch('/api/r2/download-object', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              accessKeyId: credentials.accessKeyId,
+              secretAccessKey: credentials.secretAccessKey,
+              endpoint: credentials.endpoint,
+              bucket: credentials.bucket,
+              key: item.key,
+            }),
+          });
 
-        if (!res.ok) {
-          throw new Error(`Failed to download ${item.key}: HTTP ${res.status}`);
+          if (!res.ok) {
+            let reason = `HTTP ${res.status}`;
+            if (res.status === 413) reason = 'file too large for the server (try rclone)';
+            else {
+              try {
+                const data = await res.json();
+                reason = data.details || data.error || reason;
+              } catch {
+                /* not JSON */
+              }
+            }
+            throw new Error(reason);
+          }
+
+          const buffer = await res.arrayBuffer();
+          totalBytes += buffer.byteLength;
+          zip.file(relative(item.key), buffer);
+          completed++;
+        } catch (err: any) {
+          const reason = err?.message || String(err);
+          failed.push({ key: item.key, reason });
+          addLog(`✗ Skipped "${item.key}": ${reason}`);
         }
 
-        const buffer = await res.arrayBuffer();
-        totalBytes += buffer.byteLength;
-
-        // Strip prefix for clean relative folder inside ZIP
-        const relativePath = currentPrefix
-          ? item.key.replace(currentPrefix, '')
-          : item.key;
-        zip.file(relativePath, buffer);
-
-        completed++;
+        done++;
         setBackupProgress((prev) => ({
           ...prev,
           completedFiles: completed,
           downloadedBytes: totalBytes,
-          percent: Math.floor((completed / total) * 85),
+          percent: Math.floor((done / total) * 85),
         }));
       }
 
-      // Add backup metadata manifest
+      if (completed === 0) {
+        throw new Error(`All ${total} file(s) failed to download. Nothing was saved.`);
+      }
+
+      // Add backup metadata manifest (lists any skipped files)
       zip.file(
         'backup-metadata.json',
         JSON.stringify(
@@ -732,13 +855,14 @@ export const R2BackupView: React.FC = () => {
             backupDate: new Date().toISOString(),
             filesCount: completed,
             totalBytes,
+            failedFiles: failed,
           },
           null,
           2
         )
       );
 
-      // Compress ZIP
+      // 3) Compress ZIP
       setBackupProgress((prev) => ({
         ...prev,
         status: 'compressing',
@@ -770,7 +894,14 @@ export const R2BackupView: React.FC = () => {
       });
 
       addLog(`✓ Backup complete! Saved as ${zipName} (${formatBytes(zipBlob.size)})`);
-      setSuccessMessage(`Successfully backed up ${completed} files (${formatBytes(zipBlob.size)})!`);
+      if (failed.length > 0) {
+        addLog(`⚠ ${failed.length} file(s) were skipped. See failedFiles in backup-metadata.json.`);
+        setErrorMessage(
+          `Backed up ${completed} of ${total} files. ${failed.length} file(s) were skipped (see logs).`
+        );
+      } else {
+        setSuccessMessage(`Successfully backed up ${completed} files (${formatBytes(zipBlob.size)})!`);
+      }
     } catch (err: any) {
       setBackupProgress((prev) => ({
         ...prev,
@@ -1172,6 +1303,7 @@ export const R2BackupView: React.FC = () => {
               type="button"
               onClick={handleBackupToZip}
               disabled={
+                backupProgress.status === 'listing' ||
                 backupProgress.status === 'downloading' ||
                 backupProgress.status === 'compressing' ||
                 objects.length === 0
@@ -1218,8 +1350,7 @@ export const R2BackupView: React.FC = () => {
                       type="checkbox"
                       checked={
                         selectedKeys.size > 0 &&
-                        selectedKeys.size ===
-                          objects.filter((o) => !o.isFolder).length
+                        selectedKeys.size === objects.length
                       }
                       onChange={toggleSelectAll}
                       className="rounded bg-zinc-900 border-zinc-700 text-amber-500 focus:ring-0"
@@ -1240,14 +1371,13 @@ export const R2BackupView: React.FC = () => {
                     className="hover:bg-zinc-900/40 transition group"
                   >
                     <td className="py-2 px-3">
-                      {!item.isFolder && (
-                        <input
-                          type="checkbox"
-                          checked={selectedKeys.has(item.key)}
-                          onChange={() => toggleSelect(item.key)}
-                          className="rounded bg-zinc-900 border-zinc-700 text-amber-500 focus:ring-0"
-                        />
-                      )}
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(item.key)}
+                        onChange={() => toggleSelect(item.key)}
+                        className="rounded bg-zinc-900 border-zinc-700 text-amber-500 focus:ring-0"
+                        title={item.isFolder ? 'Include this whole folder in the backup' : undefined}
+                      />
                     </td>
                     <td className="py-2 px-3">
                       {item.isFolder ? (
@@ -1482,6 +1612,42 @@ export const R2BackupView: React.FC = () => {
                 </div>
               )}
 
+              {/* Overwrite confirmation */}
+              {overwriteConflicts && overwriteConflicts.length > 0 && (
+                <div className="p-3 bg-rose-950/40 border border-rose-500/50 rounded-lg text-rose-200 text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-semibold text-rose-300">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    <span>
+                      {overwriteConflicts.length} file(s) already exist in R2. Uploading will replace them
+                      and the old versions will be lost.
+                    </span>
+                  </div>
+                  <ul className="max-h-24 overflow-y-auto font-mono text-[11px] text-rose-200/80 pl-6 list-disc">
+                    {overwriteConflicts.map((k) => (
+                      <li key={k} className="truncate" title={k}>
+                        {k}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setOverwriteConflicts(null)}
+                      className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUploadFilesToR2(true)}
+                      className="px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-bold cursor-pointer"
+                    >
+                      Replace existing files
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Error message */}
               {uploadError && (
                 <div className="p-2.5 bg-rose-950/40 border border-rose-500/50 rounded-lg text-rose-300 text-xs flex items-center gap-2">
@@ -1516,7 +1682,7 @@ export const R2BackupView: React.FC = () => {
                 <button
                   type="button"
                   disabled={isUploading || selectedFiles.length === 0}
-                  onClick={handleUploadFilesToR2}
+                  onClick={() => handleUploadFilesToR2()}
                   className="px-4 py-1.5 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 disabled:opacity-40 text-zinc-950 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20"
                 >
                   {isUploading ? (
